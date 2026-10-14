@@ -407,13 +407,14 @@ impl Widget<AppContext<'_>, Event> for EditorWidget {
                         text_layout
                             .selection(selection)
                             .into_iter()
-                            .map(|span| {
+                            .filter_map(|span| {
                                 Rect::new(
                                     self.origin.x + span.x_em * FONT_SIZE,
                                     self.origin.y + span.y_em * FONT_SIZE,
                                     (span.width_em * FONT_SIZE).max(2.0),
                                     span.height_em * FONT_SIZE,
                                 )
+                                .intersection(text_rect.inset(2.0))
                             })
                             .collect()
                     });
@@ -438,7 +439,9 @@ impl Widget<AppContext<'_>, Event> for EditorWidget {
                 );
                 let phase = context.now().duration_since(self.last_input).as_millis() as u64
                     / CARET_PERIOD.as_millis() as u64;
-                if phase.is_multiple_of(2) {
+                if phase.is_multiple_of(2)
+                    && let Some(caret_rect) = caret_rect.intersection(text_rect.inset(2.0))
+                {
                     context.quad(caret_rect, Vec4::new(0.95, 0.97, 1.0, 1.0));
                 }
             } else {

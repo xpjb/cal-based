@@ -40,6 +40,15 @@ const ACCENT: Vec4 = Vec4::new(0.40, 0.66, 0.96, 1.0);
 const LONG_PRESS: Duration = Duration::from_millis(360);
 const CLICK_SLOP: f32 = 7.0;
 const MAX_EVENT_LANES: usize = 4;
+const EVENT_COLORS: [Vec4; 7] = [
+    Vec4::new(0.29, 0.49, 0.72, 1.0),
+    Vec4::new(0.22, 0.55, 0.50, 1.0),
+    Vec4::new(0.49, 0.38, 0.67, 1.0),
+    Vec4::new(0.64, 0.43, 0.23, 1.0),
+    Vec4::new(0.65, 0.34, 0.43, 1.0),
+    Vec4::new(0.34, 0.53, 0.31, 1.0),
+    Vec4::new(0.29, 0.47, 0.57, 1.0),
+];
 
 pub struct AppContext<'a> {
     window: &'a Window,
@@ -205,31 +214,6 @@ impl Host {
             reveal_after_first_present: true,
         }
     }
-
-    fn initialize(&mut self) -> Result<(), String> {
-        if self.ready.is_some() {
-            return Ok(());
-        }
-        let gpu = pollster::block_on(Wgpu::new(&self.window, WgpuConfig::default()))?;
-        let text = Sanscale::from_static(&gpu, include_bytes!("../assets/Roboto.ttf"))?;
-        let renderer = Renderer::new(&gpu);
-        let model = AppModel::open(&self.data_path).map_err(|error| error.to_string())?;
-        self.ready = Some(Ready {
-            app: CalendarApp::new(),
-            model,
-            input: Input::default(),
-            text,
-            renderer,
-            gpu,
-        });
-        if let Some(window) = self.window.raw() {
-            window.set_min_inner_size(Some(based::backend::winit::raw::dpi::LogicalSize::new(
-                720.0, 520.0,
-            )));
-            window.set_ime_allowed(false);
-        }
-        Ok(())
-    }
 }
 
 impl Widget<WinitContext<'_>, Event> for Host {
@@ -255,9 +239,43 @@ impl Widget<WinitContext<'_>, Event> for Host {
             if !self.window.target_available() {
                 return EventFlow::NotConsumed;
             }
-            if let Err(error) = self.initialize() {
-                host.fail(error);
-                return EventFlow::NotConsumed;
+            if self.ready.is_none() {
+                let gpu = match pollster::block_on(Wgpu::new(&self.window, WgpuConfig::default())) {
+                    Ok(gpu) => gpu,
+                    Err(error) => {
+                        host.fail(error);
+                        return EventFlow::NotConsumed;
+                    }
+                };
+                let text = match Sanscale::from_static(&gpu, include_bytes!("../assets/Roboto.ttf")) {
+                    Ok(text) => text,
+                    Err(error) => {
+                        host.fail(error);
+                        return EventFlow::NotConsumed;
+                    }
+                };
+                let model = match AppModel::open(&self.data_path) {
+                    Ok(model) => model,
+                    Err(error) => {
+                        host.fail(error.to_string());
+                        return EventFlow::NotConsumed;
+                    }
+                };
+                let renderer = Renderer::new(&gpu);
+                self.ready = Some(Ready {
+                    app: CalendarApp::new(),
+                    model,
+                    input: Input::default(),
+                    text,
+                    renderer,
+                    gpu,
+                });
+                if let Some(window) = self.window.raw() {
+                    window.set_min_inner_size(Some(
+                        based::backend::winit::raw::dpi::LogicalSize::new(720.0, 520.0),
+                    ));
+                    window.set_ime_allowed(false);
+                }
             }
         }
 
@@ -566,21 +584,6 @@ impl CalendarApp {
         }
         context.request_redraw();
     }
-
-    fn normalize_scroll(&mut self, row_height: f32) {
-        while self.scroll >= row_height {
-            self.scroll -= row_height;
-            if let Some(next) = self.first_week.checked_add_days(Days::new(7)) {
-                self.first_week = next;
-            }
-        }
-        while self.scroll < 0.0 {
-            self.scroll += row_height;
-            if let Some(previous) = self.first_week.checked_sub_days(Days::new(7)) {
-                self.first_week = previous;
-            }
-        }
-    }
 }
 
 impl Widget<AppContext<'_>, Event> for CalendarApp {
@@ -814,7 +817,11 @@ impl Widget<AppContext<'_>, Event> for CalendarApp {
                         rect,
                         id: event.id,
                         description: event.description.clone(),
-                        color: if event.draft { ACCENT } else { event_color(event.id) },
+                        color: if event.draft {
+                            ACCENT
+                        } else {
+                            EVENT_COLORS[(event.id.as_u128() as usize) % EVENT_COLORS.len()]
+                        },
                         draft: event.draft,
                         start_handle,
                         end_handle,
@@ -1044,7 +1051,18 @@ impl Widget<AppContext<'_>, Event> for CalendarApp {
                 };
                 let row_height = (context.viewport().x as f32 / 7.0 * 0.92).clamp(150.0, 190.0);
                 self.scroll -= amount;
-                self.normalize_scroll(row_height);
+                while self.scroll >= row_height {
+                    self.scroll -= row_height;
+                    if let Some(next) = self.first_week.checked_add_days(Days::new(7)) {
+                        self.first_week = next;
+                    }
+                }
+                while self.scroll < 0.0 {
+                    self.scroll += row_height;
+                    if let Some(previous) = self.first_week.checked_sub_days(Days::new(7)) {
+                        self.first_week = previous;
+                    }
+                }
                 self.pointer = PointerState::Idle;
                 context.request_redraw();
             }
@@ -1067,19 +1085,6 @@ impl Widget<AppContext<'_>, Event> for CalendarApp {
 fn week_start(date: NaiveDate) -> NaiveDate {
     date.checked_sub_days(Days::new(date.weekday().num_days_from_sunday() as u64))
         .unwrap_or(date)
-}
-
-fn event_color(id: EventId) -> Vec4 {
-    const COLORS: [Vec4; 7] = [
-        Vec4::new(0.29, 0.49, 0.72, 1.0),
-        Vec4::new(0.22, 0.55, 0.50, 1.0),
-        Vec4::new(0.49, 0.38, 0.67, 1.0),
-        Vec4::new(0.64, 0.43, 0.23, 1.0),
-        Vec4::new(0.65, 0.34, 0.43, 1.0),
-        Vec4::new(0.34, 0.53, 0.31, 1.0),
-        Vec4::new(0.29, 0.47, 0.57, 1.0),
-    ];
-    COLORS[(id.as_u128() as usize) % COLORS.len()]
 }
 
 pub fn run() -> Result<(), String> {

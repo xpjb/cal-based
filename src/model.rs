@@ -210,19 +210,6 @@ impl CalendarData {
         }
     }
 
-    fn rebuild_memberships(&mut self) -> Result<(), StateError> {
-        self.days.retain(|_, day| {
-            day.events.clear();
-            !day.description.is_empty()
-        });
-        let events: Vec<_> = self.events.values().cloned().collect();
-        for event in events {
-            validate_event_range(event.start_date, event.end_date)?;
-            validate_text(&event.description)?;
-            self.add_memberships(&event);
-        }
-        Ok(())
-    }
 }
 
 fn validate_text(text: &str) -> Result<(), StateError> {
@@ -270,19 +257,6 @@ pub enum CalendarTxn {
     DeleteEvent {
         id: EventId,
     },
-}
-
-impl CalendarTxn {
-    fn confirmation_key(&self) -> CalendarKey {
-        match self {
-            Self::SetDayDescription { date, .. } => CalendarKey::Day(*date),
-            Self::CreateEvent { id, .. }
-            | Self::SetEventDescription { id, .. }
-            | Self::SetEventStart { id, .. }
-            | Self::SetEventEnd { id, .. }
-            | Self::DeleteEvent { id } => CalendarKey::Event(*id),
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -338,7 +312,22 @@ impl LocalCalendarState {
         } else {
             CalendarData::default()
         };
-        data.rebuild_memberships()?;
+        for day in data.days.values() {
+            validate_text(&day.description)?;
+        }
+        data.days.retain(|_, day| {
+            day.events.clear();
+            !day.description.is_empty()
+        });
+        for (id, event) in &mut data.events {
+            event.id = *id;
+        }
+        let events: Vec<_> = data.events.values().cloned().collect();
+        for event in events {
+            validate_event_range(event.start_date, event.end_date)?;
+            validate_text(&event.description)?;
+            data.add_memberships(&event);
+        }
         Ok(Self {
             data,
             path: Some(path),
@@ -459,7 +448,14 @@ impl AppModel {
 
         let keys: BTreeSet<_> = operations
             .iter()
-            .map(CalendarTxn::confirmation_key)
+            .map(|operation| match operation {
+                CalendarTxn::SetDayDescription { date, .. } => CalendarKey::Day(*date),
+                CalendarTxn::CreateEvent { id, .. }
+                | CalendarTxn::SetEventDescription { id, .. }
+                | CalendarTxn::SetEventStart { id, .. }
+                | CalendarTxn::SetEventEnd { id, .. }
+                | CalendarTxn::DeleteEvent { id } => CalendarKey::Event(*id),
+            })
             .collect();
         for key in keys {
             match self.state.request(key) {
@@ -621,6 +617,30 @@ mod tests {
             response.result,
             Ok(CalendarValue::Snapshot(data)) if data.event(id).is_some()
         ));
+    }
+
+    #[test]
+    fn loading_rebuilds_path_memberships_from_global_events() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("calendar.json");
+        let key = Uuid::from_u128(30);
+        let embedded = Uuid::from_u128(31);
+        fs::write(
+            &path,
+            format!(
+                r#"{{"days":{{"2026-10-01":{{"events":["{embedded}"]}}}},"events":{{"{key}":{{"id":"{embedded}","start_date":"2026-10-10","end_date":"2026-10-11"}}}}}}"#
+            ),
+        )
+        .unwrap();
+        let mut state = LocalCalendarState::open(path).unwrap();
+        state.request(CalendarKey::Snapshot).unwrap();
+        let Ok(CalendarValue::Snapshot(data)) = state.poll_response().unwrap().result else {
+            panic!("snapshot response");
+        };
+        assert_eq!(data.event(key).unwrap().id, key);
+        assert!(data.day(date(10)).unwrap().events.contains(&key));
+        assert!(data.day(date(11)).unwrap().events.contains(&key));
+        assert!(data.day(date(1)).is_none());
     }
 
     #[test]

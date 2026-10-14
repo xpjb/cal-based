@@ -45,6 +45,15 @@ impl Rect {
             size: (self.size - Vec2::splat(amount * 2.0)).max(Vec2::ZERO),
         }
     }
+
+    pub fn intersection(self, other: Self) -> Option<Self> {
+        let min = self.position.max(other.position);
+        let max = (self.position + self.size).min(other.position + other.size);
+        (max.cmpgt(min).all()).then_some(Self {
+            position: min,
+            size: max - min,
+        })
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
