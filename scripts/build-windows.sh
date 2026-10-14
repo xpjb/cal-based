@@ -19,7 +19,10 @@ mkdir -p dist
 source_exe="target/$target/release/cal-based.exe"
 output="dist/cal-based-$version-windows-x64.exe"
 cp "$source_exe" "$output"
-sha256sum "$output" > "$output.sha256"
+(
+    cd dist
+    sha256sum "$(basename "$output")" > "$(basename "$output").sha256"
+)
 
 printf '%s\n' "$output"
 cat "$output.sha256"
