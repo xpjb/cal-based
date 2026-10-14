@@ -15,7 +15,7 @@ use super::{
     paint::{HorizontalAlign, Rect, VerticalAlign},
 };
 
-const FONT_SIZE: f32 = 16.0;
+const BASE_FONT_SIZE: f32 = 18.0;
 const CARET_PERIOD: Duration = Duration::from_millis(530);
 const EDITOR_BG: Vec4 = Vec4::new(0.075, 0.088, 0.108, 1.0);
 const INPUT_BG: Vec4 = Vec4::new(0.031, 0.038, 0.049, 1.0);
@@ -123,6 +123,8 @@ struct EditorLayout {
     save: Rect,
     cancel: Rect,
     delete: Option<Rect>,
+    scale: f32,
+    font_size: f32,
 }
 
 pub struct EditorWidget {
@@ -242,17 +244,21 @@ impl EditorWidget {
         let session = self.session.as_ref()?;
         if session.document.rope.len_bytes() == 0 {
             self.handle = None;
-            self.origin = layout.text.position + Vec2::new(12.0, 11.0 - session.scroll);
+            self.origin = layout.text.position
+                + Vec2::new(12.0 * layout.scale, 11.0 * layout.scale - session.scroll);
             return None;
         }
         let content = session.document.rope.to_string();
         let mut style = context.text.style;
-        style.wrap_em = Some(((layout.text.size.x - 24.0) / FONT_SIZE).max(2.0));
+        style.wrap_em = Some(
+            ((layout.text.size.x - 24.0 * layout.scale) / layout.font_size).max(2.0),
+        );
         style.align = text::Align::Left;
         style.line_spacing = 1.18;
         let handle = context.text.raw.shape_transient(&content, &style)?;
         self.handle = Some(handle);
-        self.origin = layout.text.position + Vec2::new(12.0, 11.0 - session.scroll);
+        self.origin = layout.text.position
+            + Vec2::new(12.0 * layout.scale, 11.0 * layout.scale - session.scroll);
         Some(handle)
     }
 
@@ -266,8 +272,8 @@ impl EditorWidget {
         };
         if let Some(handle) = handle {
             let em = text::Vec2::new(
-                (self.cursor.x - self.origin.x) / FONT_SIZE,
-                (self.cursor.y - self.origin.y) / FONT_SIZE,
+                (self.cursor.x - self.origin.x) / layout.font_size,
+                (self.cursor.y - self.origin.y) / layout.font_size,
             );
             if let Some(caret) = context.text.raw.measure(handle).hit_test(em) {
                 session.place(caret, select);
@@ -302,12 +308,12 @@ impl EditorWidget {
         let text_layout = context.text.raw.measure(handle);
         session.caret = text_layout.clamp_caret(session.caret);
         let caret = text_layout.caret_rect(session.caret);
-        let top = 11.0 + caret.y_em * FONT_SIZE - session.scroll;
-        let bottom = top + caret.height_em.max(1.0) * FONT_SIZE;
-        if top < 8.0 {
-            session.scroll = (session.scroll - (8.0 - top)).max(0.0);
-        } else if bottom > layout.text.size.y - 8.0 {
-            session.scroll += bottom - (layout.text.size.y - 8.0);
+        let top = 11.0 * layout.scale + caret.y_em * layout.font_size - session.scroll;
+        let bottom = top + caret.height_em.max(1.0) * layout.font_size;
+        if top < 8.0 * layout.scale {
+            session.scroll = (session.scroll - (8.0 * layout.scale - top)).max(0.0);
+        } else if bottom > layout.text.size.y - 8.0 * layout.scale {
+            session.scroll += bottom - (layout.text.size.y - 8.0 * layout.scale);
         }
     }
 }
@@ -320,8 +326,14 @@ impl Widget<AppContext<'_>, Event> for EditorWidget {
 
         if matches!(event, Event::Host(HostEvent::RedrawRequested)) {
             let viewport = context.viewport().as_vec2();
-            let panel_width = (viewport.x - 48.0).min(720.0).max(420.0);
-            let panel_height = (viewport.y - 48.0).min(570.0).max(380.0);
+            let scale = context.scale_factor();
+            let font_size = BASE_FONT_SIZE * scale;
+            let panel_width = (viewport.x - 48.0 * scale)
+                .min(760.0 * scale)
+                .max(420.0 * scale);
+            let panel_height = (viewport.y - 48.0 * scale)
+                .min(620.0 * scale)
+                .max(420.0 * scale);
             let panel = Rect::new(
                 (viewport.x - panel_width) * 0.5,
                 (viewport.y - panel_height) * 0.5,
@@ -329,23 +341,40 @@ impl Widget<AppContext<'_>, Event> for EditorWidget {
                 panel_height,
             );
             let text_rect = Rect::new(
-                panel.position.x + 24.0,
-                panel.position.y + 92.0,
-                panel.size.x - 48.0,
-                panel.size.y - 164.0,
+                panel.position.x + 24.0 * scale,
+                panel.position.y + 104.0 * scale,
+                panel.size.x - 48.0 * scale,
+                panel.size.y - 184.0 * scale,
             );
-            let save = Rect::new(panel.right() - 112.0, panel.bottom() - 54.0, 88.0, 34.0);
-            let cancel = Rect::new(save.position.x - 98.0, save.position.y, 88.0, 34.0);
+            let save = Rect::new(
+                panel.right() - 124.0 * scale,
+                panel.bottom() - 62.0 * scale,
+                100.0 * scale,
+                40.0 * scale,
+            );
+            let cancel = Rect::new(
+                save.position.x - 112.0 * scale,
+                save.position.y,
+                100.0 * scale,
+                40.0 * scale,
+            );
             let delete = matches!(
                 self.session.as_ref().map(|session| session.target),
                 Some(EditorTarget::Event { .. })
             )
-            .then_some(Rect::new(panel.position.x + 24.0, save.position.y, 88.0, 34.0));
+            .then_some(Rect::new(
+                panel.position.x + 24.0 * scale,
+                save.position.y,
+                100.0 * scale,
+                40.0 * scale,
+            ));
             let layout = EditorLayout {
                 text: text_rect,
                 save,
                 cancel,
                 delete,
+                scale,
+                font_size,
             };
             self.layout = Some(layout);
 
@@ -353,8 +382,12 @@ impl Widget<AppContext<'_>, Event> for EditorWidget {
                 Rect::new(0.0, 0.0, viewport.x, viewport.y),
                 Vec4::new(0.0, 0.0, 0.0, 0.72),
             );
-            context.quad(panel, EDITOR_BG);
-            context.border(panel, 1.0, Vec4::new(0.30, 0.35, 0.42, 1.0));
+            context.rounded_rect(
+                panel,
+                12.0 * scale,
+                Vec4::new(0.30, 0.35, 0.42, 1.0),
+            );
+            context.rounded_rect(panel.inset(scale), 11.0 * scale, EDITOR_BG);
             let (title, subtitle) = match self.session.as_ref().expect("checked above").target {
                 EditorTarget::Day(date) => (
                     "DAY DESCRIPTION".to_owned(),
@@ -379,8 +412,13 @@ impl Widget<AppContext<'_>, Event> for EditorWidget {
             };
             let _ = context.text(
                 &title,
-                Rect::new(panel.position.x + 24.0, panel.position.y + 18.0, panel.size.x - 48.0, 30.0),
-                19.0,
+                Rect::new(
+                    panel.position.x + 24.0 * scale,
+                    panel.position.y + 18.0 * scale,
+                    panel.size.x - 48.0 * scale,
+                    36.0 * scale,
+                ),
+                22.0 * scale,
                 TEXT,
                 HorizontalAlign::Left,
                 VerticalAlign::Center,
@@ -388,15 +426,20 @@ impl Widget<AppContext<'_>, Event> for EditorWidget {
             );
             let _ = context.text(
                 &subtitle,
-                Rect::new(panel.position.x + 24.0, panel.position.y + 51.0, panel.size.x - 48.0, 24.0),
-                12.0,
+                Rect::new(
+                    panel.position.x + 24.0 * scale,
+                    panel.position.y + 60.0 * scale,
+                    panel.size.x - 48.0 * scale,
+                    28.0 * scale,
+                ),
+                14.0 * scale,
                 ACCENT,
                 HorizontalAlign::Left,
                 VerticalAlign::Center,
                 false,
             );
-            context.quad(text_rect, INPUT_BG);
-            context.border(text_rect, 1.0, GRID);
+            context.rounded_rect(text_rect, 8.0 * scale, GRID);
+            context.rounded_rect(text_rect.inset(scale), 7.0 * scale, INPUT_BG);
 
             let handle = self.shape(context, layout);
             if let Some(handle) = handle {
@@ -409,21 +452,21 @@ impl Widget<AppContext<'_>, Event> for EditorWidget {
                             .into_iter()
                             .filter_map(|span| {
                                 Rect::new(
-                                    self.origin.x + span.x_em * FONT_SIZE,
-                                    self.origin.y + span.y_em * FONT_SIZE,
-                                    (span.width_em * FONT_SIZE).max(2.0),
-                                    span.height_em * FONT_SIZE,
+                                    self.origin.x + span.x_em * layout.font_size,
+                                    self.origin.y + span.y_em * layout.font_size,
+                                    (span.width_em * layout.font_size).max(2.0 * scale),
+                                    span.height_em * layout.font_size,
                                 )
-                                .intersection(text_rect.inset(2.0))
+                                .intersection(text_rect.inset(2.0 * scale))
                             })
                             .collect()
                     });
                     let caret = text_layout.caret_rect(text_layout.clamp_caret(session.caret));
                     let caret_rect = Rect::new(
-                        self.origin.x + caret.x_em * FONT_SIZE,
-                        self.origin.y + caret.y_em * FONT_SIZE,
-                        1.5,
-                        caret.height_em.max(1.0) * FONT_SIZE,
+                        self.origin.x + caret.x_em * layout.font_size,
+                        self.origin.y + caret.y_em * layout.font_size,
+                        1.5 * scale,
+                        caret.height_em.max(1.0) * layout.font_size,
                     );
                     (selection_rects, caret_rect)
                 };
@@ -433,22 +476,22 @@ impl Widget<AppContext<'_>, Event> for EditorWidget {
                 context.draw_text(
                     handle,
                     self.origin,
-                    FONT_SIZE,
+                    layout.font_size,
                     Vec4::new(0.86, 0.88, 0.91, 1.0),
-                    text_rect.inset(2.0),
+                    text_rect.inset(2.0 * scale),
                 );
                 let phase = context.now().duration_since(self.last_input).as_millis() as u64
                     / CARET_PERIOD.as_millis() as u64;
                 if phase.is_multiple_of(2)
-                    && let Some(caret_rect) = caret_rect.intersection(text_rect.inset(2.0))
+                    && let Some(caret_rect) = caret_rect.intersection(text_rect.inset(2.0 * scale))
                 {
                     context.quad(caret_rect, Vec4::new(0.95, 0.97, 1.0, 1.0));
                 }
             } else {
                 let _ = context.text(
                     "Write something…",
-                    text_rect.inset(12.0),
-                    FONT_SIZE,
+                    text_rect.inset(12.0 * scale),
+                    layout.font_size,
                     Vec4::new(0.34, 0.38, 0.44, 1.0),
                     HorizontalAlign::Left,
                     VerticalAlign::Top,
@@ -458,12 +501,23 @@ impl Widget<AppContext<'_>, Event> for EditorWidget {
                     / CARET_PERIOD.as_millis() as u64;
                 if phase.is_multiple_of(2) {
                     context.quad(
-                        Rect::new(text_rect.position.x + 12.0, text_rect.position.y + 11.0, 1.5, FONT_SIZE * 1.15),
+                        Rect::new(
+                            text_rect.position.x + 12.0 * scale,
+                            text_rect.position.y + 11.0 * scale,
+                            1.5 * scale,
+                            layout.font_size * 1.15,
+                        ),
                         Vec4::new(0.95, 0.97, 1.0, 1.0),
                     );
                 }
             }
 
+            let footer = Rect::new(
+                panel.position.x + 138.0 * scale,
+                panel.bottom() - 61.0 * scale,
+                cancel.position.x - panel.position.x - 150.0 * scale,
+                38.0 * scale,
+            );
             if let Some(error) = self
                 .session
                 .as_ref()
@@ -471,8 +525,8 @@ impl Widget<AppContext<'_>, Event> for EditorWidget {
             {
                 let _ = context.text(
                     error,
-                    Rect::new(panel.position.x + 122.0, panel.bottom() - 53.0, cancel.position.x - panel.position.x - 132.0, 32.0),
-                    10.5,
+                    footer,
+                    12.5 * scale,
                     Vec4::new(1.0, 0.55, 0.58, 1.0),
                     HorizontalAlign::Left,
                     VerticalAlign::Center,
@@ -481,8 +535,8 @@ impl Widget<AppContext<'_>, Event> for EditorWidget {
             } else {
                 let _ = context.text(
                     "Ctrl+Enter saves · Esc cancels",
-                    Rect::new(panel.position.x + 122.0, panel.bottom() - 53.0, cancel.position.x - panel.position.x - 132.0, 32.0),
-                    10.5,
+                    footer,
+                    12.5 * scale,
                     MUTED,
                     HorizontalAlign::Left,
                     VerticalAlign::Center,
@@ -494,12 +548,16 @@ impl Widget<AppContext<'_>, Event> for EditorWidget {
                 (cancel, "CANCEL", Vec4::new(0.13, 0.15, 0.18, 1.0)),
                 (save, "SAVE", Vec4::new(0.25, 0.47, 0.72, 1.0)),
             ] {
-                context.quad(rect, fill);
-                context.border(rect, 1.0, Vec4::new(0.32, 0.39, 0.49, 1.0));
+                context.rounded_rect(
+                    rect,
+                    8.0 * scale,
+                    Vec4::new(0.32, 0.39, 0.49, 1.0),
+                );
+                context.rounded_rect(rect.inset(scale), 7.0 * scale, fill);
                 let _ = context.text(
                     label,
                     rect,
-                    11.0,
+                    13.0 * scale,
                     TEXT,
                     HorizontalAlign::Center,
                     VerticalAlign::Center,
@@ -507,12 +565,20 @@ impl Widget<AppContext<'_>, Event> for EditorWidget {
                 );
             }
             if let Some(delete) = delete {
-                context.quad(delete, Vec4::new(0.35, 0.16, 0.20, 1.0));
-                context.border(delete, 1.0, Vec4::new(0.57, 0.29, 0.35, 1.0));
+                context.rounded_rect(
+                    delete,
+                    8.0 * scale,
+                    Vec4::new(0.57, 0.29, 0.35, 1.0),
+                );
+                context.rounded_rect(
+                    delete.inset(scale),
+                    7.0 * scale,
+                    Vec4::new(0.35, 0.16, 0.20, 1.0),
+                );
                 let _ = context.text(
                     "DELETE",
                     delete,
-                    11.0,
+                    13.0 * scale,
                     Vec4::new(1.0, 0.82, 0.84, 1.0),
                     HorizontalAlign::Center,
                     VerticalAlign::Center,
@@ -587,7 +653,7 @@ impl Widget<AppContext<'_>, Event> for EditorWidget {
                     && layout.text.contains(self.cursor)
                 {
                     let amount = match delta {
-                        ScrollDelta::Lines { delta } => delta.y * 42.0,
+                        ScrollDelta::Lines { delta } => delta.y * 48.0 * layout.scale,
                         ScrollDelta::Pixels { delta } => delta.y as f32,
                     };
                     session.scroll = (session.scroll - amount).max(0.0);

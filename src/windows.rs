@@ -66,6 +66,10 @@ impl AppContext<'_> {
         self.gpu.size()
     }
 
+    pub fn scale_factor(&self) -> f32 {
+        (self.window.scale_factor() as f32).clamp(1.0, 3.0)
+    }
+
     pub fn request_redraw(&self) {
         self.window.request_redraw();
     }
@@ -92,9 +96,9 @@ impl AppContext<'_> {
         }
     }
 
-    pub fn border(&mut self, rect: Rect, width: f32, color: Vec4) {
+    pub fn rounded_rect(&mut self, rect: Rect, radius: f32, color: Vec4) {
         if let Some(frame) = self.frame.as_deref_mut() {
-            frame.border(rect, width, color);
+            frame.rounded_rect(rect, radius, color);
         }
     }
 
@@ -407,9 +411,15 @@ struct EventStrip {
     fixed_for_end: NaiveDate,
 }
 
+struct Navigation {
+    target_week: NaiveDate,
+    last_tick: Instant,
+}
+
 struct CalendarApp {
     first_week: NaiveDate,
     scroll: f32,
+    navigation: Option<Navigation>,
     pointer: PointerState,
     cursor: Vec2,
     modifiers: ModifiersState,
@@ -425,6 +435,7 @@ impl CalendarApp {
                 .checked_sub_days(Days::new(14))
                 .unwrap_or_else(|| week_start(today)),
             scroll: 0.0,
+            navigation: None,
             pointer: PointerState::Idle,
             cursor: Vec2::ZERO,
             modifiers: ModifiersState::empty(),
@@ -444,14 +455,17 @@ impl CalendarApp {
     fn pointer_down(&mut self, context: &mut AppContext<'_>, pointer: u64, point: Vec2) {
         if self.hits.today.is_some_and(|rect| rect.contains(point)) {
             let today = Local::now().date_naive();
-            self.first_week = week_start(today)
-                .checked_sub_days(Days::new(14))
-                .unwrap_or_else(|| week_start(today));
-            self.scroll = 0.0;
+            self.navigation = Some(Navigation {
+                target_week: week_start(today)
+                    .checked_sub_days(Days::new(14))
+                    .unwrap_or_else(|| week_start(today)),
+                last_tick: context.now(),
+            });
             self.pointer = PointerState::Idle;
             context.request_redraw();
             return;
         }
+        self.navigation = None;
         let endpoint = self
             .hits
             .events
@@ -524,7 +538,7 @@ impl CalendarApp {
                 origin,
                 ..
             } if active == pointer => {
-                if point.distance(origin) <= CLICK_SLOP {
+                if point.distance(origin) <= CLICK_SLOP * context.scale_factor() {
                     match target {
                         PressTarget::Day(date) => {
                             let description = context.model.calendar().day_description(date).to_owned();
@@ -584,17 +598,59 @@ impl CalendarApp {
         }
         context.request_redraw();
     }
+
+    fn move_scroll(&mut self, delta: f32, row_height: f32) {
+        self.scroll += delta;
+        let rows = (self.scroll / row_height).floor() as i64;
+        if rows == 0 {
+            return;
+        }
+        let days = rows.unsigned_abs().saturating_mul(7);
+        let next = if rows > 0 {
+            self.first_week.checked_add_days(Days::new(days))
+        } else {
+            self.first_week.checked_sub_days(Days::new(days))
+        };
+        if let Some(next) = next {
+            self.first_week = next;
+            self.scroll -= rows as f32 * row_height;
+        }
+    }
 }
 
 impl Widget<AppContext<'_>, Event> for CalendarApp {
     fn handle_event(&mut self, context: &mut AppContext<'_>, event: &Event) -> EventFlow {
         if matches!(event, Event::Host(HostEvent::RedrawRequested)) {
             let viewport = context.viewport().as_vec2();
-            let header_height = 68.0;
-            let weekday_height = 30.0;
+            let scale = context.scale_factor();
+            let header_height = 78.0 * scale;
+            let weekday_height = 36.0 * scale;
             let calendar_top = header_height + weekday_height;
-            let row_height = (viewport.x / 7.0 * 0.92).clamp(150.0, 190.0);
+            let row_height = (viewport.x / 7.0 * 1.02).clamp(184.0 * scale, 228.0 * scale);
             let cell_width = viewport.x / 7.0;
+            let grid_width = scale.max(1.0);
+
+            if let Some(navigation) = &self.navigation {
+                let target_week = navigation.target_week;
+                let elapsed = context.now().duration_since(navigation.last_tick);
+                let weeks = target_week
+                    .signed_duration_since(self.first_week)
+                    .num_days() as f32
+                    / 7.0;
+                let error = weeks * row_height - self.scroll;
+                if error.abs() <= 0.45 * scale {
+                    self.first_week = target_week;
+                    self.scroll = 0.0;
+                    self.navigation = None;
+                } else {
+                    let proportion = (1.0 - (-7.5 * elapsed.as_secs_f32()).exp()).min(0.28);
+                    self.move_scroll(error * proportion, row_height);
+                    if let Some(navigation) = &mut self.navigation {
+                        navigation.last_tick = context.now();
+                    }
+                    context.request_redraw();
+                }
+            }
             let rows = (((viewport.y - calendar_top + self.scroll).max(0.0) / row_height)
                 .ceil() as usize)
                 + 2;
@@ -632,16 +688,32 @@ impl Widget<AppContext<'_>, Event> for CalendarApp {
                     );
                     context.quad(rect, if column == 0 || column == 6 { WEEKEND } else { CELL });
                     context.quad(
-                        Rect::new(rect.right() - 1.0, rect.position.y, 1.0, rect.size.y),
+                        Rect::new(
+                            rect.right() - grid_width,
+                            rect.position.y,
+                            grid_width,
+                            rect.size.y,
+                        ),
                         GRID,
                     );
                     context.quad(
-                        Rect::new(rect.position.x, rect.bottom() - 1.0, rect.size.x, 1.0),
+                        Rect::new(
+                            rect.position.x,
+                            rect.bottom() - grid_width,
+                            rect.size.x,
+                            grid_width,
+                        ),
                         GRID,
                     );
                     if date == Local::now().date_naive() {
-                        context.quad(
-                            Rect::new(rect.position.x + 7.0, rect.position.y + 7.0, 29.0, 27.0),
+                        context.rounded_rect(
+                            Rect::new(
+                                rect.position.x + 8.0 * scale,
+                                rect.position.y + 8.0 * scale,
+                                36.0 * scale,
+                                34.0 * scale,
+                            ),
+                            8.0 * scale,
                             ACCENT,
                         );
                     }
@@ -672,8 +744,13 @@ impl Widget<AppContext<'_>, Event> for CalendarApp {
                     let today = date == Local::now().date_naive();
                     let _ = context.text(
                         &number,
-                        Rect::new(cell.position.x + 8.0, cell.position.y + 7.0, 28.0, 26.0),
-                        14.0,
+                        Rect::new(
+                            cell.position.x + 8.0 * scale,
+                            cell.position.y + 8.0 * scale,
+                            36.0 * scale,
+                            34.0 * scale,
+                        ),
+                        18.0 * scale,
                         if today { BACKGROUND } else { TEXT },
                         HorizontalAlign::Center,
                         VerticalAlign::Center,
@@ -683,8 +760,13 @@ impl Widget<AppContext<'_>, Event> for CalendarApp {
                         let month = date.format("%b").to_string().to_uppercase();
                         let _ = context.text(
                             &month,
-                            Rect::new(cell.position.x + 41.0, cell.position.y + 8.0, cell_width - 48.0, 24.0),
-                            10.0,
+                            Rect::new(
+                                cell.position.x + 50.0 * scale,
+                                cell.position.y + 10.0 * scale,
+                                cell_width - 58.0 * scale,
+                                28.0 * scale,
+                            ),
+                            12.5 * scale,
                             MUTED,
                             HorizontalAlign::Left,
                             VerticalAlign::Center,
@@ -696,12 +778,12 @@ impl Widget<AppContext<'_>, Event> for CalendarApp {
                         let _ = context.text(
                             &description,
                             Rect::new(
-                                cell.position.x + 8.0,
-                                cell.position.y + 37.0,
-                                cell_width - 16.0,
-                                (row_height - 125.0).max(18.0),
+                                cell.position.x + 9.0 * scale,
+                                cell.position.y + 48.0 * scale,
+                                cell_width - 18.0 * scale,
+                                (row_height - 158.0 * scale).max(22.0 * scale),
                             ),
-                            11.5,
+                            14.0 * scale,
                             Vec4::new(0.73, 0.77, 0.82, 1.0),
                             HorizontalAlign::Left,
                             VerticalAlign::Top,
@@ -767,8 +849,8 @@ impl Widget<AppContext<'_>, Event> for CalendarApp {
                 })
                 .collect();
             let lanes = assign_event_lanes(&lane_events);
-            let strip_height = 17.0;
-            let strip_pitch = 20.0;
+            let strip_height = 24.0 * scale;
+            let strip_pitch = 28.0 * scale;
             let mut strips = Vec::new();
             for event in &visual_events {
                 let lane = lanes.get(&event.id).copied().unwrap_or(0);
@@ -792,26 +874,29 @@ impl Widget<AppContext<'_>, Event> for CalendarApp {
                         .num_days() as f32;
                     let starts_here = event.start_date >= week.start;
                     let ends_here = event.end_date <= week_end;
-                    let left_pad = if starts_here { 4.0 } else { 0.0 };
-                    let right_pad = if ends_here { 4.0 } else { 0.0 };
+                    let left_pad = if starts_here { 5.0 * scale } else { 0.0 };
+                    let right_pad = if ends_here { 5.0 * scale } else { 0.0 };
                     let rect = Rect::new(
                         start_column * cell_width + left_pad,
-                        week.rect.bottom() - 6.0 - strip_height - lane as f32 * strip_pitch,
+                        week.rect.bottom()
+                            - 8.0 * scale
+                            - strip_height
+                            - lane as f32 * strip_pitch,
                         ((end_column - start_column + 1.0) * cell_width - left_pad - right_pad)
                             .max(2.0),
                         strip_height,
                     );
                     let start_handle = starts_here.then_some(Rect::new(
                         rect.position.x,
-                        rect.position.y - 3.0,
-                        11.0,
-                        rect.size.y + 6.0,
+                        rect.position.y - 4.0 * scale,
+                        14.0 * scale,
+                        rect.size.y + 8.0 * scale,
                     ));
                     let end_handle = ends_here.then_some(Rect::new(
-                        rect.right() - 11.0,
-                        rect.position.y - 3.0,
-                        11.0,
-                        rect.size.y + 6.0,
+                        rect.right() - 14.0 * scale,
+                        rect.position.y - 4.0 * scale,
+                        14.0 * scale,
+                        rect.size.y + 8.0 * scale,
                     ));
                     strips.push(EventStrip {
                         rect,
@@ -832,15 +917,33 @@ impl Widget<AppContext<'_>, Event> for CalendarApp {
             }
 
             for strip in &strips {
-                context.quad(strip.rect, strip.color);
                 if strip.draft {
-                    context.border(strip.rect, 2.0, Vec4::new(0.82, 0.91, 1.0, 1.0));
+                    context.rounded_rect(
+                        strip.rect,
+                        7.0 * scale,
+                        Vec4::new(0.82, 0.91, 1.0, 1.0),
+                    );
+                    context.rounded_rect(
+                        strip.rect.inset(2.0 * scale),
+                        5.0 * scale,
+                        strip.color,
+                    );
+                } else {
+                    context.rounded_rect(strip.rect, 7.0 * scale, strip.color);
                 }
                 if let Some(handle) = strip.start_handle {
-                    context.quad(handle.inset(3.0), Vec4::new(1.0, 1.0, 1.0, 0.34));
+                    context.rounded_rect(
+                        handle.inset(4.0 * scale),
+                        3.0 * scale,
+                        Vec4::new(1.0, 1.0, 1.0, 0.34),
+                    );
                 }
                 if let Some(handle) = strip.end_handle {
-                    context.quad(handle.inset(3.0), Vec4::new(1.0, 1.0, 1.0, 0.34));
+                    context.rounded_rect(
+                        handle.inset(4.0 * scale),
+                        3.0 * scale,
+                        Vec4::new(1.0, 1.0, 1.0, 0.34),
+                    );
                 }
                 if !strip.draft {
                     self.hits.events.push(EventHit {
@@ -869,8 +972,8 @@ impl Widget<AppContext<'_>, Event> for CalendarApp {
                     let description = strip.description.lines().next().unwrap_or("");
                     let _ = context.text(
                         description,
-                        strip.rect.inset(3.0),
-                        10.5,
+                        strip.rect.inset(4.0 * scale),
+                        13.5 * scale,
                         Vec4::ONE,
                         HorizontalAlign::Center,
                         VerticalAlign::Center,
@@ -880,7 +983,10 @@ impl Widget<AppContext<'_>, Event> for CalendarApp {
             }
 
             context.quad(Rect::new(0.0, header_height, viewport.x, weekday_height), WEEKDAY_BAR);
-            context.quad(Rect::new(0.0, calendar_top - 1.0, viewport.x, 1.0), GRID);
+            context.quad(
+                Rect::new(0.0, calendar_top - grid_width, viewport.x, grid_width),
+                GRID,
+            );
             for (column, weekday) in ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"]
                 .into_iter()
                 .enumerate()
@@ -888,7 +994,7 @@ impl Widget<AppContext<'_>, Event> for CalendarApp {
                 let _ = context.text(
                     weekday,
                     Rect::new(column as f32 * cell_width, header_height, cell_width, weekday_height),
-                    10.5,
+                    13.0 * scale,
                     if column == 0 || column == 6 { MUTED } else { TEXT },
                     HorizontalAlign::Center,
                     VerticalAlign::Center,
@@ -897,11 +1003,14 @@ impl Widget<AppContext<'_>, Event> for CalendarApp {
             }
 
             context.quad(Rect::new(0.0, 0.0, viewport.x, header_height), HEADER);
-            context.quad(Rect::new(0.0, header_height - 1.0, viewport.x, 1.0), GRID);
+            context.quad(
+                Rect::new(0.0, header_height - grid_width, viewport.x, grid_width),
+                GRID,
+            );
             let _ = context.text(
                 "CAL",
-                Rect::new(18.0, 8.0, 90.0, 34.0),
-                24.0,
+                Rect::new(20.0 * scale, 9.0 * scale, 100.0 * scale, 40.0 * scale),
+                28.0 * scale,
                 TEXT,
                 HorizontalAlign::Left,
                 VerticalAlign::Center,
@@ -914,8 +1023,8 @@ impl Widget<AppContext<'_>, Event> for CalendarApp {
             let month_title = center_date.format("%B %Y").to_string();
             let _ = context.text(
                 &month_title,
-                Rect::new(105.0, 9.0, 260.0, 30.0),
-                17.0,
+                Rect::new(118.0 * scale, 10.0 * scale, 290.0 * scale, 36.0 * scale),
+                20.0 * scale,
                 Vec4::new(0.73, 0.78, 0.85, 1.0),
                 HorizontalAlign::Left,
                 VerticalAlign::Center,
@@ -927,8 +1036,13 @@ impl Widget<AppContext<'_>, Event> for CalendarApp {
             );
             let _ = context.text(
                 &hint,
-                Rect::new(19.0, 41.0, viewport.x - 150.0, 20.0),
-                10.5,
+                Rect::new(
+                    21.0 * scale,
+                    49.0 * scale,
+                    viewport.x - 180.0 * scale,
+                    22.0 * scale,
+                ),
+                12.5 * scale,
                 if context.model.last_error().is_some() {
                     Vec4::new(1.0, 0.55, 0.58, 1.0)
                 } else {
@@ -938,14 +1052,27 @@ impl Widget<AppContext<'_>, Event> for CalendarApp {
                 VerticalAlign::Center,
                 false,
             );
-            let today_button = Rect::new(viewport.x - 108.0, 16.0, 88.0, 36.0);
+            let today_button = Rect::new(
+                viewport.x - 124.0 * scale,
+                18.0 * scale,
+                104.0 * scale,
+                42.0 * scale,
+            );
             self.hits.today = Some(today_button);
-            context.quad(today_button, Vec4::new(0.16, 0.24, 0.34, 1.0));
-            context.border(today_button, 1.0, Vec4::new(0.34, 0.46, 0.61, 1.0));
+            context.rounded_rect(
+                today_button,
+                11.0 * scale,
+                Vec4::new(0.34, 0.46, 0.61, 1.0),
+            );
+            context.rounded_rect(
+                today_button.inset(grid_width),
+                10.0 * scale,
+                Vec4::new(0.16, 0.24, 0.34, 1.0),
+            );
             let _ = context.text(
                 "TODAY",
                 today_button,
-                11.5,
+                14.0 * scale,
                 TEXT,
                 HorizontalAlign::Center,
                 VerticalAlign::Center,
@@ -1006,6 +1133,10 @@ impl Widget<AppContext<'_>, Event> for CalendarApp {
                         context.wake_at(deadline);
                     }
                 }
+                if self.navigation.is_some() {
+                    context.wake_at(context.now() + Duration::from_millis(16));
+                    context.request_redraw();
+                }
             }
             Event::Input(InputEvent::ModifiersChanged { modifiers }) => {
                 self.modifiers = *modifiers;
@@ -1045,24 +1176,15 @@ impl Widget<AppContext<'_>, Event> for CalendarApp {
                 }
             }
             Event::Input(InputEvent::MouseWheel { delta, .. }) => {
+                let scale = context.scale_factor();
                 let amount = match delta {
-                    ScrollDelta::Lines { delta } => delta.y * 52.0,
+                    ScrollDelta::Lines { delta } => delta.y * 64.0 * scale,
                     ScrollDelta::Pixels { delta } => delta.y as f32,
                 };
-                let row_height = (context.viewport().x as f32 / 7.0 * 0.92).clamp(150.0, 190.0);
-                self.scroll -= amount;
-                while self.scroll >= row_height {
-                    self.scroll -= row_height;
-                    if let Some(next) = self.first_week.checked_add_days(Days::new(7)) {
-                        self.first_week = next;
-                    }
-                }
-                while self.scroll < 0.0 {
-                    self.scroll += row_height;
-                    if let Some(previous) = self.first_week.checked_sub_days(Days::new(7)) {
-                        self.first_week = previous;
-                    }
-                }
+                let row_height = (context.viewport().x as f32 / 7.0 * 1.02)
+                    .clamp(184.0 * scale, 228.0 * scale);
+                self.navigation = None;
+                self.move_scroll(-amount, row_height);
                 self.pointer = PointerState::Idle;
                 context.request_redraw();
             }
@@ -1071,6 +1193,7 @@ impl Widget<AppContext<'_>, Event> for CalendarApp {
                     && matches!(key.logical_key, Key::Named(NamedKey::Escape)) =>
             {
                 self.pointer = PointerState::Idle;
+                self.navigation = None;
                 context.request_redraw();
             }
             Event::Host(HostEvent::Focused { focused: false }) => {

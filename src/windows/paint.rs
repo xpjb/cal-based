@@ -1,4 +1,4 @@
-use std::mem::size_of;
+use std::{f32::consts::FRAC_PI_2, mem::size_of};
 
 use based::{
     glam::{UVec2, Vec2, Vec4},
@@ -101,53 +101,88 @@ impl FrameCanvas {
     }
 
     pub fn quad(&mut self, rect: Rect, color: Vec4) {
-        if rect.size.x <= 0.0 || rect.size.y <= 0.0 || color.w <= 0.0 {
+        if rect.size.x <= 0.0 || rect.size.y <= 0.0 {
             return;
         }
         let min = rect.position;
         let max = rect.position + rect.size;
+        self.triangles(
+            &[
+                min,
+                Vec2::new(max.x, min.y),
+                max,
+                min,
+                max,
+                Vec2::new(min.x, max.y),
+            ],
+            color,
+        );
+    }
+
+    pub fn rounded_rect(&mut self, rect: Rect, radius: f32, color: Vec4) {
+        if rect.size.x <= 0.0 || rect.size.y <= 0.0 || color.w <= 0.0 {
+            return;
+        }
+        let radius = radius.min(rect.size.x * 0.5).min(rect.size.y * 0.5);
+        if radius <= 0.5 {
+            self.quad(rect, color);
+            return;
+        }
+        const CORNER_STEPS: usize = 5;
+        let mut points = Vec::with_capacity((CORNER_STEPS + 1) * 4);
+        let centers = [
+            Vec2::new(rect.right() - radius, rect.position.y + radius),
+            Vec2::new(rect.right() - radius, rect.bottom() - radius),
+            Vec2::new(rect.position.x + radius, rect.bottom() - radius),
+            Vec2::new(rect.position.x + radius, rect.position.y + radius),
+        ];
+        for (corner, center) in centers.into_iter().enumerate() {
+            let start = -FRAC_PI_2 + corner as f32 * FRAC_PI_2;
+            for step in 0..=CORNER_STEPS {
+                let angle = start + step as f32 / CORNER_STEPS as f32 * FRAC_PI_2;
+                points.push(center + Vec2::new(angle.cos(), angle.sin()) * radius);
+            }
+        }
+        let center = rect.center();
+        let mut triangles = Vec::with_capacity(points.len() * 3);
+        for index in 0..points.len() {
+            triangles.extend_from_slice(&[
+                center,
+                points[index],
+                points[(index + 1) % points.len()],
+            ]);
+        }
+        self.triangles(&triangles, color);
+    }
+
+    fn triangles(&mut self, points: &[Vec2], color: Vec4) {
+        if points.len() < 3 || color.w <= 0.0 {
+            return;
+        }
+        debug_assert!(points.len().is_multiple_of(3));
         let viewport = self.viewport.as_vec2().max(Vec2::ONE);
         let clip = |point: Vec2| {
             point / viewport * Vec2::new(2.0, -2.0) + Vec2::new(-1.0, 1.0)
         };
-        let points = [
-            min,
-            Vec2::new(max.x, min.y),
-            max,
-            min,
-            max,
-            Vec2::new(min.x, max.y),
-        ];
         let first = self.vertices.len() as u32;
-        for point in points {
-            self.vertices.push(Vertex {
-                position: clip(point).to_array(),
-                color: color.to_array(),
-            });
-        }
+        self.vertices.extend(points.iter().map(|point| Vertex {
+            position: clip(*point).to_array(),
+            color: color.to_array(),
+        }));
+        let added = points.len() as u32;
         if let Some(PaintCommand::Quads {
             first: previous,
             vertices,
         }) = self.commands.last_mut()
             && *previous + *vertices == first
         {
-            *vertices += 6;
+            *vertices += added;
         } else {
-            self.commands.push(PaintCommand::Quads { first, vertices: 6 });
+            self.commands.push(PaintCommand::Quads {
+                first,
+                vertices: added,
+            });
         }
-    }
-
-    pub fn border(&mut self, rect: Rect, width: f32, color: Vec4) {
-        self.quad(Rect::new(rect.position.x, rect.position.y, rect.size.x, width), color);
-        self.quad(
-            Rect::new(rect.position.x, rect.bottom() - width, rect.size.x, width),
-            color,
-        );
-        self.quad(Rect::new(rect.position.x, rect.position.y, width, rect.size.y), color);
-        self.quad(
-            Rect::new(rect.right() - width, rect.position.y, width, rect.size.y),
-            color,
-        );
     }
 
     pub fn text(
