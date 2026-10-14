@@ -1,0 +1,25 @@
+[package]
+name = "cal-based"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.87"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/xpjb/cal-based"
+
+[dependencies]
+based = { git = "ssh://git@github.com/xpjb/based.git", rev = "2434d71f9d5cf109b98a1bfc41b5a72d54662105", features = ["wgpu", "sanscale"] }
+bytemuck = { version = "1", features = ["derive"] }
+chrono = { version = "0.4", features = ["clock", "serde"] }
+directories = "6"
+pollster = "0.4"
+ropey = { version = "1", default-features = false, features = ["simd"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+uuid = { version = "1", features = ["serde", "v4"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+arboard = "3"
+
+[dev-dependencies]
+tempfile = "3"
