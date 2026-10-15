@@ -131,8 +131,11 @@ impl SettingsWidget {
         self.draft.is_some()
     }
 
-    pub fn open(&mut self, context: &mut AppContext<'_>) {
-        let settings = context.model.calendar().settings().clone();
+    pub fn open(
+        &mut self,
+        context: &mut AppContext<'_>,
+        settings: CalendarSettings,
+    ) {
         let color = self.selected.color(settings.day_colors);
         (self.hue, self.saturation, self.value) = rgb_to_hsv(color);
         self.draft = Some(settings);
@@ -145,10 +148,10 @@ impl SettingsWidget {
             return;
         };
         match context
-            .model
+            .state
             .transact(vec![CalendarTxn::SetSettings { settings }])
         {
-            Ok(()) => {
+            Ok(_) => {
                 self.draft = None;
                 self.layout = None;
                 self.picker = None;
@@ -295,8 +298,8 @@ impl SettingsWidget {
     }
 }
 
-impl Widget<AppContext<'_>, Event> for SettingsWidget {
-    fn handle_event(&mut self, context: &mut AppContext<'_>, event: &Event) -> EventFlow {
+impl Widget<AppContext<'_>, AppEvent> for SettingsWidget {
+    fn handle_event(&mut self, context: &mut AppContext<'_>, event: &AppEvent) -> EventFlow {
         let Some(settings) = self.draft.clone() else {
             return EventFlow::NotConsumed;
         };

@@ -7,7 +7,7 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/xpjb/cal-based"
 
 [dependencies]
-based = { git = "ssh://git@github.com/xpjb/based.git", rev = "e2bcd858592e71960c4c4370a5c7192f623d4d18", features = ["wgpu", "sanscale"] }
+based = { git = "ssh://git@github.com/xpjb/based.git", rev = "024d8504f43b6183e1c0fab4ff59a46ca9c56ac8", features = ["wgpu", "sanscale"] }
 bytemuck = { version = "1", features = ["derive"] }
 chrono = { version = "0.4", features = ["clock", "serde"] }
 directories = "6"

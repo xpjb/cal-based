@@ -176,6 +176,9 @@ struct Navigation {
 }
 
 pub struct CalendarWidget {
+    calendar: CalendarData,
+    last_error: Option<StateError>,
+    snapshot_requested: bool,
     first_week: NaiveDate,
     scroll: f32,
     navigation: Option<Navigation>,
@@ -192,6 +195,9 @@ impl CalendarWidget {
     pub fn new() -> Self {
         let today = Local::now().date_naive();
         Self {
+            calendar: CalendarData::default(),
+            last_error: None,
+            snapshot_requested: false,
             first_week: week_start(today),
             scroll: 0.0,
             navigation: None,
@@ -278,9 +284,8 @@ impl CalendarWidget {
                             endpoint,
                             fixed,
                         } => {
-                            let endpoint_date = context
-                                .model
-                                .calendar()
+                            let endpoint_date = self
+                                .calendar
                                 .event(id)
                                 .map(|event| match endpoint {
                                     Endpoint::Start => event.start_date,
@@ -363,7 +368,8 @@ impl CalendarWidget {
         let settings = self.settings_button.release(pointer, point);
         let today_button = self.today_button.release(pointer, point);
         if settings == ButtonRelease::Activated {
-            self.settings.open(context);
+            self.settings
+                .open(context, self.calendar.settings().clone());
             self.pointer = PointerState::Idle;
             if pointer == MOUSE_POINTER {
                 context.set_cursor(CursorIcon::Default);
@@ -402,15 +408,11 @@ impl CalendarWidget {
                 if point.distance(origin) <= CLICK_SLOP * context.scale_factor() {
                     match target {
                         PressTarget::Day(date) => {
-                            let description = context
-                                .model
-                                .calendar()
-                                .day_description(date)
-                                .to_owned();
+                            let description = self.calendar.day_description(date).to_owned();
                             self.editor.open_day(context, date, description);
                         }
                         PressTarget::Event(id) => {
-                            if let Some(event) = context.model.calendar().event(id).cloned() {
+                            if let Some(event) = self.calendar.event(id).cloned() {
                                 self.editor.open_event(context, event);
                             }
                         }
@@ -428,13 +430,13 @@ impl CalendarWidget {
                 } else {
                     (current, origin)
                 };
-                if let Err(error) = context.model.transact(vec![CalendarTxn::CreateEvent {
+                if let Err(error) = context.state.transact(vec![CalendarTxn::CreateEvent {
                     id: Uuid::new_v4(),
                     start_date,
                     end_date,
                     description: String::new(),
                 }]) {
-                    eprintln!("create event: {error}");
+                    self.last_error = Some(error);
                 }
             }
             PointerState::Resizing {
@@ -456,8 +458,8 @@ impl CalendarWidget {
                         end_date: current,
                     },
                 };
-                if let Err(error) = context.model.transact(vec![operation]) {
-                    eprintln!("resize event: {error}");
+                if let Err(error) = context.state.transact(vec![operation]) {
+                    self.last_error = Some(error);
                 }
             }
             other => self.pointer = other,
@@ -487,8 +489,23 @@ impl CalendarWidget {
     }
 }
 
-impl Widget<AppContext<'_>, Event> for CalendarWidget {
-    fn handle_event(&mut self, context: &mut AppContext<'_>, event: &Event) -> EventFlow {
+impl Widget<AppContext<'_>, AppEvent> for CalendarWidget {
+    fn handle_event(&mut self, context: &mut AppContext<'_>, event: &AppEvent) -> EventFlow {
+        if let Event::User(StateEvent::Value { key, result, .. }) = event {
+            match result {
+                Ok(value) => {
+                    if let Err(error) = self.calendar.apply_value(*key, value.clone()) {
+                        self.last_error = Some(error);
+                    }
+                }
+                Err(error) => self.last_error = Some(error.clone()),
+            }
+            let _ = self.editor.handle_event(context, event);
+            let _ = self.settings.handle_event(context, event);
+            context.request_redraw();
+            return EventFlow::NotConsumed;
+        }
+
         if matches!(event, Event::Host(HostEvent::RedrawRequested)) {
             if let Some(point) = context.input.pointer() {
                 self.cursor = point;
@@ -502,7 +519,7 @@ impl Widget<AppContext<'_>, Event> for CalendarWidget {
             let cell_width = viewport.x / 7.0;
             let grid_width = scale.max(1.0);
             let today = Local::now().date_naive();
-            let day_colors = context.model.calendar().settings().day_colors;
+            let day_colors = self.calendar.settings().day_colors;
             self.today_button.set_rect(Rect::new(
                 viewport.x - 124.0 * scale,
                 11.0 * scale,
@@ -622,9 +639,8 @@ impl Widget<AppContext<'_>, Event> for CalendarWidget {
                 .last()
                 .and_then(|week| week.start.checked_add_days(Days::new(6)))
                 .unwrap_or(first_visible);
-            let mut visual_events: Vec<EventVisual> = context
-                .model
-                .calendar()
+            let mut visual_events: Vec<EventVisual> = self
+                .calendar
                 .events_between(first_visible, last_visible)
                 .cloned()
                 .map(|event| EventVisual {
@@ -889,7 +905,7 @@ impl Widget<AppContext<'_>, Event> for CalendarWidget {
                             false,
                         );
                     }
-                    let description = context.model.calendar().day_description(date).to_owned();
+                    let description = self.calendar.day_description(date).to_owned();
                     if !description.is_empty() {
                         let _ = context.text(
                             &description,
@@ -1069,7 +1085,7 @@ impl Widget<AppContext<'_>, Event> for CalendarWidget {
                 VerticalAlign::Center,
                 false,
             );
-            if let Some(error) = context.model.last_error() {
+            if let Some(error) = &self.last_error {
                 let _ = context.text(
                     &error.to_string(),
                     Rect::new(
@@ -1103,9 +1119,16 @@ impl Widget<AppContext<'_>, Event> for CalendarWidget {
         }
 
         match event {
-            Event::Host(HostEvent::TargetCreated | HostEvent::Resized { .. }) => {
+            Event::Host(HostEvent::TargetCreated) => {
+                if !self.snapshot_requested {
+                    self.snapshot_requested = true;
+                    if let Err(error) = context.state.request(CalendarKey::Snapshot) {
+                        self.last_error = Some(error);
+                    }
+                }
                 context.request_redraw();
             }
+            Event::Host(HostEvent::Resized { .. }) => context.request_redraw(),
             Event::Host(HostEvent::AboutToWait) => {
                 if let PointerState::Pressed {
                     pointer,

@@ -139,7 +139,7 @@ checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
 [[package]]
 name = "based"
 version = "0.1.0"
-source = "git+ssh://git@github.com/xpjb/based.git?rev=e2bcd858592e71960c4c4370a5c7192f623d4d18#e2bcd858592e71960c4c4370a5c7192f623d4d18"
+source = "git+ssh://git@github.com/xpjb/based.git?rev=024d8504f43b6183e1c0fab4ff59a46ca9c56ac8#024d8504f43b6183e1c0fab4ff59a46ca9c56ac8"
 dependencies = [
  "fontdb",
  "glam 0.30.10",

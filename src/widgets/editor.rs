@@ -116,8 +116,8 @@ impl EditorWidget {
                 CalendarTxn::SetEventDescription { id, description }
             }
         };
-        match context.model.transact(vec![operation]) {
-            Ok(()) => self.close(context),
+        match context.state.transact(vec![operation]) {
+            Ok(_) => self.close(context),
             Err(error) => {
                 if let Some(session) = &mut self.session {
                     session.error = Some(error.to_string());
@@ -128,8 +128,8 @@ impl EditorWidget {
     }
 }
 
-impl Widget<AppContext<'_>, Event> for EditorWidget {
-    fn handle_event(&mut self, context: &mut AppContext<'_>, event: &Event) -> EventFlow {
+impl Widget<AppContext<'_>, AppEvent> for EditorWidget {
+    fn handle_event(&mut self, context: &mut AppContext<'_>, event: &AppEvent) -> EventFlow {
         if self.session.is_none() {
             return EventFlow::NotConsumed;
         }
@@ -384,8 +384,8 @@ impl Widget<AppContext<'_>, Event> for EditorWidget {
                 } else if delete == ButtonRelease::Activated {
                     let target = self.session.as_ref().map(|session| session.target);
                     if let Some(EditorTarget::Event { id, .. }) = target {
-                        match context.model.transact(vec![CalendarTxn::DeleteEvent { id }]) {
-                            Ok(()) => self.close(context),
+                        match context.state.transact(vec![CalendarTxn::DeleteEvent { id }]) {
+                            Ok(_) => self.close(context),
                             Err(error) => {
                                 if let Some(session) = &mut self.session {
                                     session.error = Some(error.to_string());

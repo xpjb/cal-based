@@ -1,34 +1,28 @@
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap, VecDeque},
+    collections::{BTreeMap, BTreeSet},
     fs,
-    path::{Path, PathBuf},
+    path::PathBuf,
 };
 
+use based::UserEventSender;
 use chrono::{Days, NaiveDate};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
 
 pub type EventId = Uuid;
+pub type RequestId = u64;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct GenericResponse<K, V, E> {
-    pub request_id: u64,
-    pub request: K,
-    pub result: Result<V, E>,
-}
-
-pub trait LazyState {
+pub trait StateClient {
     type Key;
-    type Value;
     type Operation;
     type Error;
 
-    fn request(&mut self, key: Self::Key) -> Result<u64, Self::Error>;
-    fn transact(&mut self, operations: Vec<Self::Operation>) -> Result<(), Self::Error>;
-    fn poll_response(
+    fn request(&mut self, key: Self::Key) -> Result<RequestId, Self::Error>;
+    fn transact(
         &mut self,
-    ) -> Option<GenericResponse<Self::Key, Self::Value, Self::Error>>;
+        operations: Vec<Self::Operation>,
+    ) -> Result<RequestId, Self::Error>;
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -133,6 +127,36 @@ impl CalendarData {
 
     pub fn settings(&self) -> &CalendarSettings {
         &self.settings
+    }
+
+    pub fn apply_value(
+        &mut self,
+        key: CalendarKey,
+        value: CalendarValue,
+    ) -> Result<(), StateError> {
+        match (key, value) {
+            (CalendarKey::Snapshot, CalendarValue::Snapshot(calendar)) => *self = calendar,
+            (CalendarKey::Day(date), CalendarValue::Day(day)) => match day {
+                Some(day) => {
+                    self.days.insert(date, day);
+                }
+                None => {
+                    self.days.remove(&date);
+                }
+            },
+            (CalendarKey::Event(id), CalendarValue::Event(event)) => {
+                self.replace_event_snapshot(id, event);
+            }
+            (CalendarKey::Settings, CalendarValue::Settings(settings)) => {
+                self.settings = settings;
+            }
+            _ => {
+                return Err(StateError::Decode(
+                    "state returned a value for the wrong key".into(),
+                ));
+            }
+        }
+        Ok(())
     }
 
     pub fn events_between(
@@ -363,15 +387,27 @@ pub enum StateError {
     Write(String),
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum StateEvent {
+    Value {
+        request_id: RequestId,
+        key: CalendarKey,
+        result: Result<CalendarValue, StateError>,
+    },
+}
+
 pub struct LocalCalendarState {
     data: CalendarData,
     path: Option<PathBuf>,
-    next_request_id: u64,
-    responses: VecDeque<GenericResponse<CalendarKey, CalendarValue, StateError>>,
+    next_request_id: RequestId,
+    events: UserEventSender<StateEvent>,
 }
 
 impl LocalCalendarState {
-    pub fn open(path: impl Into<PathBuf>) -> Result<Self, StateError> {
+    pub fn open(
+        path: impl Into<PathBuf>,
+        events: UserEventSender<StateEvent>,
+    ) -> Result<Self, StateError> {
         let path = path.into();
         let mut data = if path.exists() {
             let bytes = fs::read(&path).map_err(|error| StateError::Read(error.to_string()))?;
@@ -390,8 +426,8 @@ impl LocalCalendarState {
         for (id, event) in &mut data.events {
             event.id = *id;
         }
-        let events: Vec<_> = data.events.values().cloned().collect();
-        for event in events {
+        let stored_events: Vec<_> = data.events.values().cloned().collect();
+        for event in stored_events {
             validate_event_range(event.start_date, event.end_date)?;
             validate_text(&event.description)?;
             data.add_memberships(&event);
@@ -400,121 +436,59 @@ impl LocalCalendarState {
             data,
             path: Some(path),
             next_request_id: 1,
-            responses: VecDeque::new(),
+            events,
         })
     }
 
-    pub fn memory(data: CalendarData) -> Self {
+    pub fn memory(data: CalendarData, events: UserEventSender<StateEvent>) -> Self {
         Self {
             data,
             path: None,
             next_request_id: 1,
-            responses: VecDeque::new(),
+            events,
         }
     }
-}
 
-impl LazyState for LocalCalendarState {
-    type Key = CalendarKey;
-    type Value = CalendarValue;
-    type Operation = CalendarTxn;
-    type Error = StateError;
-
-    fn request(&mut self, key: Self::Key) -> Result<u64, Self::Error> {
+    fn next_request(&mut self) -> Result<RequestId, StateError> {
         let request_id = self.next_request_id;
         self.next_request_id = self
             .next_request_id
             .checked_add(1)
             .ok_or(StateError::RequestIdExhausted)?;
+        Ok(request_id)
+    }
+
+    fn send_value(&self, request_id: RequestId, key: CalendarKey) {
         let value = match key {
             CalendarKey::Snapshot => CalendarValue::Snapshot(self.data.clone()),
             CalendarKey::Day(date) => CalendarValue::Day(self.data.days.get(&date).cloned()),
             CalendarKey::Event(id) => CalendarValue::Event(self.data.events.get(&id).cloned()),
             CalendarKey::Settings => CalendarValue::Settings(self.data.settings.clone()),
         };
-        self.responses.push_back(GenericResponse {
+        let _ = self.events.send(StateEvent::Value {
             request_id,
-            request: key,
+            key,
             result: Ok(value),
         });
+    }
+}
+
+impl StateClient for LocalCalendarState {
+    type Key = CalendarKey;
+    type Operation = CalendarTxn;
+    type Error = StateError;
+
+    fn request(&mut self, key: Self::Key) -> Result<RequestId, Self::Error> {
+        let request_id = self.next_request()?;
+        self.send_value(request_id, key);
         Ok(request_id)
     }
 
-    fn transact(&mut self, operations: Vec<Self::Operation>) -> Result<(), Self::Error> {
-        let mut next = self.data.clone();
-        next.apply_transactions(&operations)?;
-        if let Some(path) = &self.path {
-            if let Some(parent) = path.parent() {
-                fs::create_dir_all(parent)
-                    .map_err(|error| StateError::Write(error.to_string()))?;
-            }
-            let bytes = serde_json::to_vec_pretty(&next)
-                .map_err(|error| StateError::Write(error.to_string()))?;
-            fs::write(path, bytes).map_err(|error| StateError::Write(error.to_string()))?;
-        }
-        self.data = next;
-        Ok(())
-    }
-
-    fn poll_response(
+    fn transact(
         &mut self,
-    ) -> Option<GenericResponse<Self::Key, Self::Value, Self::Error>> {
-        self.responses.pop_front()
-    }
-}
-
-pub struct AppModel {
-    state: LocalCalendarState,
-    calendar: CalendarData,
-    latest_requests: HashMap<CalendarKey, u64>,
-    loaded: bool,
-    last_error: Option<StateError>,
-}
-
-impl AppModel {
-    pub fn open(path: impl AsRef<Path>) -> Result<Self, StateError> {
-        Self::new(LocalCalendarState::open(path.as_ref())?)
-    }
-
-    pub fn memory(data: CalendarData) -> Result<Self, StateError> {
-        Self::new(LocalCalendarState::memory(data))
-    }
-
-    fn new(mut state: LocalCalendarState) -> Result<Self, StateError> {
-        let request = state.request(CalendarKey::Snapshot)?;
-        let mut latest_requests = HashMap::new();
-        latest_requests.insert(CalendarKey::Snapshot, request);
-        Ok(Self {
-            state,
-            calendar: CalendarData::default(),
-            latest_requests,
-            loaded: false,
-            last_error: None,
-        })
-    }
-
-    pub fn calendar(&self) -> &CalendarData {
-        &self.calendar
-    }
-
-    pub fn loaded(&self) -> bool {
-        self.loaded
-    }
-
-    pub fn last_error(&self) -> Option<&StateError> {
-        self.last_error.as_ref()
-    }
-
-    pub fn clear_error(&mut self) {
-        self.last_error = None;
-    }
-
-    pub fn transact(&mut self, operations: Vec<CalendarTxn>) -> Result<(), StateError> {
-        let mut predicted = self.calendar.clone();
-        predicted.apply_transactions(&operations)?;
-        self.state.transact(operations.clone())?;
-        self.calendar = predicted;
-
+        operations: Vec<Self::Operation>,
+    ) -> Result<RequestId, Self::Error> {
+        let request_id = self.next_request()?;
         let keys: BTreeSet<_> = operations
             .iter()
             .map(|operation| match operation {
@@ -527,57 +501,22 @@ impl AppModel {
                 CalendarTxn::SetSettings { .. } => CalendarKey::Settings,
             })
             .collect();
+        let mut next = self.data.clone();
+        next.apply_transactions(&operations)?;
+        if let Some(path) = &self.path {
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent)
+                    .map_err(|error| StateError::Write(error.to_string()))?;
+            }
+            let bytes = serde_json::to_vec_pretty(&next)
+                .map_err(|error| StateError::Write(error.to_string()))?;
+            fs::write(path, bytes).map_err(|error| StateError::Write(error.to_string()))?;
+        }
+        self.data = next;
         for key in keys {
-            match self.state.request(key) {
-                Ok(request_id) => {
-                    self.latest_requests.insert(key, request_id);
-                }
-                Err(error) => self.last_error = Some(error),
-            }
+            self.send_value(request_id, key);
         }
-        Ok(())
-    }
-
-    pub fn poll(&mut self) -> bool {
-        let mut changed = false;
-        while let Some(response) = self.state.poll_response() {
-            if self.latest_requests.get(&response.request) != Some(&response.request_id) {
-                continue;
-            }
-            match (response.request, response.result) {
-                (CalendarKey::Snapshot, Ok(CalendarValue::Snapshot(calendar))) => {
-                    self.calendar = calendar;
-                    self.loaded = true;
-                    changed = true;
-                }
-                (CalendarKey::Day(date), Ok(CalendarValue::Day(day))) => {
-                    match day {
-                        Some(day) => {
-                            self.calendar.days.insert(date, day);
-                        }
-                        None => {
-                            self.calendar.days.remove(&date);
-                        }
-                    }
-                    changed = true;
-                }
-                (CalendarKey::Event(id), Ok(CalendarValue::Event(event))) => {
-                    self.calendar.replace_event_snapshot(id, event);
-                    changed = true;
-                }
-                (CalendarKey::Settings, Ok(CalendarValue::Settings(settings))) => {
-                    self.calendar.settings = settings;
-                    changed = true;
-                }
-                (_, Ok(_)) => {
-                    self.last_error = Some(StateError::Decode(
-                        "state returned a value for the wrong key".into(),
-                    ));
-                }
-                (_, Err(error)) => self.last_error = Some(error),
-            }
-        }
-        changed
+        Ok(request_id)
     }
 }
 
@@ -605,10 +544,22 @@ pub fn assign_event_lanes<'a>(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc, Mutex};
+
     use super::*;
 
     fn date(day: u32) -> NaiveDate {
         NaiveDate::from_ymd_opt(2026, 10, day).unwrap()
+    }
+
+    fn state_events() -> (UserEventSender<StateEvent>, Arc<Mutex<Vec<StateEvent>>>) {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let captured = events.clone();
+        let sender = UserEventSender::new(move |event| {
+            captured.lock().unwrap().push(event);
+            Ok(())
+        });
+        (sender, events)
     }
 
     #[test]
@@ -662,12 +613,13 @@ mod tests {
     }
 
     #[test]
-    fn local_state_persists_and_answers_lazy_requests() {
+    fn local_state_persists_and_sends_responses() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("calendar.json");
         let id = Uuid::from_u128(3);
-        let mut state = LocalCalendarState::open(&path).unwrap();
-        state
+        let (sender, events) = state_events();
+        let mut state = LocalCalendarState::open(&path, sender.clone()).unwrap();
+        let transaction_id = state
             .transact(vec![CalendarTxn::CreateEvent {
                 id,
                 start_date: date(9),
@@ -675,11 +627,33 @@ mod tests {
                 description: "conference".into(),
             }])
             .unwrap();
-        let request_id = state.request(CalendarKey::Event(id)).unwrap();
-        let response = state.poll_response().unwrap();
-        assert_eq!(response.request_id, request_id);
+        let StateEvent::Value {
+            request_id,
+            key,
+            result,
+        } = events.lock().unwrap().pop().unwrap();
+        assert_eq!(request_id, transaction_id);
+        assert_eq!(key, CalendarKey::Event(id));
+        let mut mirror = CalendarData::default();
+        mirror.apply_value(key, result.clone().unwrap()).unwrap();
+        assert!(mirror.day(date(9)).unwrap().events.contains(&id));
+        assert!(mirror.day(date(11)).unwrap().events.contains(&id));
         assert!(matches!(
-            response.result,
+            result,
+            Ok(CalendarValue::Event(Some(CalendarEvent { description, .. })))
+                if description == "conference"
+        ));
+
+        let request_id = state.request(CalendarKey::Event(id)).unwrap();
+        let StateEvent::Value {
+            request_id: response_id,
+            key,
+            result,
+        } = events.lock().unwrap().pop().unwrap();
+        assert_eq!(response_id, request_id);
+        assert_eq!(key, CalendarKey::Event(id));
+        assert!(matches!(
+            result,
             Ok(CalendarValue::Event(Some(CalendarEvent { description, .. })))
                 if description == "conference"
         ));
@@ -691,18 +665,17 @@ mod tests {
                 settings: settings.clone(),
             }])
             .unwrap();
+        events.lock().unwrap().clear();
         state.request(CalendarKey::Settings).unwrap();
-        let response = state.poll_response().unwrap();
-        assert_eq!(
-            response.result,
-            Ok(CalendarValue::Settings(settings.clone()))
-        );
+        let StateEvent::Value { result, .. } = events.lock().unwrap().pop().unwrap();
+        assert_eq!(result, Ok(CalendarValue::Settings(settings.clone())));
 
-        let mut reopened = LocalCalendarState::open(path).unwrap();
+        let mut reopened = LocalCalendarState::open(path, sender).unwrap();
+        events.lock().unwrap().clear();
         reopened.request(CalendarKey::Snapshot).unwrap();
-        let response = reopened.poll_response().unwrap();
+        let StateEvent::Value { result, .. } = events.lock().unwrap().pop().unwrap();
         assert!(matches!(
-            response.result,
+            result,
             Ok(CalendarValue::Snapshot(data))
                 if data.event(id).is_some() && data.settings() == &settings
         ));
@@ -721,9 +694,14 @@ mod tests {
             ),
         )
         .unwrap();
-        let mut state = LocalCalendarState::open(path).unwrap();
+        let (sender, events) = state_events();
+        let mut state = LocalCalendarState::open(path, sender).unwrap();
         state.request(CalendarKey::Snapshot).unwrap();
-        let Ok(CalendarValue::Snapshot(data)) = state.poll_response().unwrap().result else {
+        let StateEvent::Value {
+            result: Ok(CalendarValue::Snapshot(data)),
+            ..
+        } = events.lock().unwrap().pop().unwrap()
+        else {
             panic!("snapshot response");
         };
         assert_eq!(data.event(key).unwrap().id, key);
@@ -758,23 +736,5 @@ mod tests {
         assert_eq!(lanes[&events[0].id], 0);
         assert_eq!(lanes[&events[1].id], 1);
         assert_eq!(lanes[&events[2].id], 0);
-    }
-
-    #[test]
-    fn app_model_predicts_then_accepts_local_confirmation() {
-        let mut model = AppModel::memory(CalendarData::default()).unwrap();
-        assert!(model.poll());
-        let id = Uuid::from_u128(4);
-        model
-            .transact(vec![CalendarTxn::CreateEvent {
-                id,
-                start_date: date(10),
-                end_date: date(12),
-                description: String::new(),
-            }])
-            .unwrap();
-        assert!(model.calendar().event(id).is_some());
-        assert!(model.poll());
-        assert!(model.calendar().event(id).is_some());
     }
 }

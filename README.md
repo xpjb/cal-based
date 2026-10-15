@@ -27,7 +27,9 @@ The editor is a custom `based` widget. It stores text in a `ropey::Rope` and use
 
 ## State design
 
-All mutation goes through `CalendarTxn` and `LazyState::transact`. The Windows application uses `LocalCalendarState`, which applies a transaction locally and writes JSON. `AppModel` keeps the UI mirror, applies a successful transaction as client prediction, and requests the affected value for confirmation.
+All reads and mutations go through the separate `StateClient::request` and `StateClient::transact` operations. Both return a request ID. The Windows application uses `LocalCalendarState`, which applies transactions locally, writes JSON, and sends each requested or affected value through `based::UserEventSender<StateEvent>`. There is no response polling.
+
+`CalendarWidget` owns the current full `CalendarData` snapshot for now. State responses arrive as `Event::User` values and are routed through the widget tree. This keeps the client boundary in place without adding range subscriptions or cache tiers yet.
 
 The stored model corresponds to:
 
@@ -53,7 +55,7 @@ The application composes only these low-level `based` services:
 - `Sanscale`
 - `Input`
 
-Every application widget receives one concrete `AppContext`, including `&mut AppModel`. The Windows host, calendar widget, editor widget, settings widget, reusable interactive surfaces, and GPU painter are separate modules. Buttons own their hover and press state. Calendar cells, events, endpoints, and text fields use the same explicit idle, hovered, pressed, and dragging surface states.
+Every application widget receives one concrete `AppContext`, including only `&mut dyn StateClient` for state access. The calendar widget owns its UI snapshot, while the backing store and event sender stay inside the host. The Windows host, calendar widget, editor widget, settings widget, reusable interactive surfaces, and GPU painter are separate modules. Buttons own their hover and press state. Calendar cells, events, endpoints, and text fields use the same explicit idle, hovered, pressed, and dragging surface states.
 
 Rounded surfaces are single GPU quads. The fragment shader computes the radius, border, and antialias coverage, so controls do not depend on CPU polygon tessellation.
 

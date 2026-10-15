@@ -16,7 +16,7 @@ use crate::*;
 use std::{env, path::PathBuf};
 
 use based::{
-    Event, EventFlow, HostEvent, Widget,
+    Event, EventFlow, HostEvent, UserEventSender, Widget,
     backend::winit::{self, WinitContext, raw::window::CursorIcon},
     glam::{UVec2, Vec2, Vec4},
     web_time::Instant,
@@ -29,11 +29,17 @@ use based::{
 };
 use directories::ProjectDirs;
 
+pub(crate) type AppEvent = Event<StateEvent>;
+
 pub struct AppContext<'a> {
     window: &'a Window,
     gpu: &'a Wgpu,
     pub input: &'a Input,
-    pub model: &'a mut AppModel,
+    pub state: &'a mut dyn StateClient<
+        Key = CalendarKey,
+        Operation = CalendarTxn,
+        Error = StateError,
+    >,
     pub(crate) text: &'a mut Sanscale,
     frame: Option<&'a mut FrameCanvas>,
     now: Instant,
@@ -146,7 +152,7 @@ impl AppContext<'_> {
 
 struct Ready {
     app: CalendarWidget,
-    model: AppModel,
+    state: LocalCalendarState,
     input: Input,
     text: Sanscale,
     renderer: Renderer,
@@ -158,18 +164,15 @@ impl Ready {
         &mut self,
         window: &Window,
         frame: Option<&mut FrameCanvas>,
-        event: &Event,
+        event: &AppEvent,
     ) -> (EventFlow, Option<Instant>) {
         let _ = self.input.handle_event(&mut (), event);
-        if self.model.poll() {
-            window.request_redraw();
-        }
         let mut next_wake = None;
         let mut context = AppContext {
             window,
             gpu: &self.gpu,
             input: &self.input,
-            model: &mut self.model,
+            state: &mut self.state,
             text: &mut self.text,
             frame,
             now: Instant::now(),
@@ -182,7 +185,7 @@ impl Ready {
     fn redraw(
         &mut self,
         window: &Window,
-        event: &Event,
+        event: &AppEvent,
     ) -> Option<(EventFlow, Option<Instant>)> {
         let mut frame = self.gpu.begin_frame()?;
         frame.clear(wgpu::Color {
@@ -205,11 +208,12 @@ struct Host {
     window: Window,
     ready: Option<Ready>,
     data_path: PathBuf,
+    events: UserEventSender<StateEvent>,
     reveal_after_first_present: bool,
 }
 
 impl Host {
-    fn new(data_path: PathBuf) -> Self {
+    fn new(data_path: PathBuf, events: UserEventSender<StateEvent>) -> Self {
         Self {
             window: Window::new(WindowConfig {
                 title: "Cal · based".into(),
@@ -219,13 +223,14 @@ impl Host {
             }),
             ready: None,
             data_path,
+            events,
             reveal_after_first_present: true,
         }
     }
 }
 
-impl Widget<WinitContext<'_>, Event> for Host {
-    fn handle_event(&mut self, host: &mut WinitContext<'_>, event: &Event) -> EventFlow {
+impl Widget<WinitContext<'_>, AppEvent> for Host {
+    fn handle_event(&mut self, host: &mut WinitContext<'_>, event: &AppEvent) -> EventFlow {
         let destroying = matches!(
             event,
             Event::Host(HostEvent::TargetDestroyed | HostEvent::WindowDestroyed)
@@ -262,8 +267,11 @@ impl Widget<WinitContext<'_>, Event> for Host {
                         return EventFlow::NotConsumed;
                     }
                 };
-                let model = match AppModel::open(&self.data_path) {
-                    Ok(model) => model,
+                let state = match LocalCalendarState::open(
+                    &self.data_path,
+                    self.events.clone(),
+                ) {
+                    Ok(state) => state,
                     Err(error) => {
                         host.fail(error.to_string());
                         return EventFlow::NotConsumed;
@@ -272,7 +280,7 @@ impl Widget<WinitContext<'_>, Event> for Host {
                 let renderer = Renderer::new(&gpu);
                 self.ready = Some(Ready {
                     app: CalendarWidget::new(),
-                    model,
+                    state,
                     input: Input::default(),
                     text,
                     renderer,
@@ -330,12 +338,11 @@ impl Widget<WinitContext<'_>, Event> for Host {
     }
 }
 
-
 pub fn run() -> Result<(), String> {
     let data_path = env::var_os("CAL_BASED_DATA").map(PathBuf::from).or_else(|| {
         ProjectDirs::from("dev", "xpjb", "cal-based")
             .map(|directories| directories.data_local_dir().join("calendar.json"))
     });
     let data_path = data_path.ok_or_else(|| "Windows local data directory is unavailable".to_owned())?;
-    winit::run(Host::new(data_path))
+    winit::run(|events| Host::new(data_path, events))
 }

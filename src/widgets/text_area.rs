@@ -162,8 +162,8 @@ impl TextArea {
     }
 }
 
-impl Widget<AppContext<'_>, Event> for TextArea {
-    fn handle_event(&mut self, context: &mut AppContext<'_>, event: &Event) -> EventFlow {
+impl Widget<AppContext<'_>, AppEvent> for TextArea {
+    fn handle_event(&mut self, context: &mut AppContext<'_>, event: &AppEvent) -> EventFlow {
         if let Event::Input(InputEvent::ModifiersChanged { modifiers }) = event {
             self.modifiers = *modifiers;
             return EventFlow::NotConsumed;
