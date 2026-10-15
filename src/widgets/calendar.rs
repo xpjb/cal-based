@@ -109,7 +109,7 @@ struct Navigation {
 
 pub struct CalendarWidget {
     days: BTreeMap<NaiveDate, DayWidget>,
-    events: BTreeMap<EventId, CalendarEventWidget>,
+    events: BTreeMap<EventId, CalendarEvent>,
     requested_events: BTreeSet<EventId>,
     calendar_settings: CalendarSettings,
     settings_requested: bool,
@@ -225,7 +225,6 @@ impl CalendarWidget {
                             let endpoint_date = self
                                 .events
                                 .get(&id)
-                                .map(CalendarEventWidget::event)
                                 .map(|event| match endpoint {
                                     Endpoint::Start => event.start_date,
                                     Endpoint::End => event.end_date,
@@ -357,12 +356,7 @@ impl CalendarWidget {
                             }
                         }
                         PressTarget::Event(id) => {
-                            if let Some(event) = self
-                                .events
-                                .get(&id)
-                                .map(CalendarEventWidget::event)
-                                .cloned()
-                            {
+                            if let Some(event) = self.events.get(&id).cloned() {
                                 self.editor.open_event(context, event);
                             }
                         }
@@ -452,11 +446,11 @@ impl Widget<AppContext<'_>, AppEvent> for CalendarWidget {
                         self.last_error = Some(StateError::Decode(
                             "state returned an event with the wrong ID".into(),
                         ));
-                    } else if let Some(event_widget) = self.events.get_mut(id) {
-                        let _ = event_widget.handle_event(context, event);
+                    } else if let Some(stored_event) = self.events.get_mut(id) {
+                        let _ = stored_event.handle_event(context, event);
                     } else {
                         self.events
-                            .insert(*id, CalendarEventWidget::new(calendar_event.clone()));
+                            .insert(*id, calendar_event.clone());
                     }
                 }
                 (CalendarKey::Event(id), Ok(CalendarValue::Event(None))) => {
@@ -608,8 +602,7 @@ impl Widget<AppContext<'_>, AppEvent> for CalendarWidget {
                 .values()
                 .flat_map(DayWidget::event_ids)
                 .collect();
-            self.events.retain(|id, event_widget| {
-                let event = event_widget.event();
+            self.events.retain(|id, event| {
                 active_event_ids.contains(id)
                     || (event.start_date <= interest_end && event.end_date >= interest_start)
             });
@@ -625,7 +618,7 @@ impl Widget<AppContext<'_>, AppEvent> for CalendarWidget {
             let mut visual_events: Vec<EventVisual> = self
                 .events
                 .values()
-                .map(CalendarEventWidget::visual)
+                .map(EventVisual::from)
                 .filter(|event| {
                     event.start_date <= interest_end && event.end_date >= interest_start
                 })

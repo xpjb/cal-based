@@ -245,40 +245,28 @@ impl EventStrip {
     }
 }
 
-pub struct CalendarEventWidget {
-    event: CalendarEvent,
-}
-
-impl CalendarEventWidget {
-    pub fn new(event: CalendarEvent) -> Self {
-        Self { event }
-    }
-
-    pub fn event(&self) -> &CalendarEvent {
-        &self.event
-    }
-
-    pub fn visual(&self) -> EventVisual {
-        EventVisual {
-            id: self.event.id,
-            start_date: self.event.start_date,
-            end_date: self.event.end_date,
-            description: self.event.description.clone(),
+impl From<&CalendarEvent> for EventVisual {
+    fn from(event: &CalendarEvent) -> Self {
+        Self {
+            id: event.id,
+            start_date: event.start_date,
+            end_date: event.end_date,
+            description: event.description.clone(),
             draft: false,
         }
     }
 }
 
-impl Widget<AppContext<'_>, AppEvent> for CalendarEventWidget {
+impl Widget<AppContext<'_>, AppEvent> for CalendarEvent {
     fn handle_event(&mut self, _context: &mut AppContext<'_>, event: &AppEvent) -> EventFlow {
         if let Event::User(StateEvent::Value {
             key: CalendarKey::Event(id),
             result: Ok(CalendarValue::Event(Some(event))),
             ..
         }) = event
-            && *id == self.event.id
+            && *id == self.id
         {
-            self.event.clone_from(event);
+            self.clone_from(event);
         }
         EventFlow::NotConsumed
     }

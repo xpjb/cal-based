@@ -31,7 +31,7 @@ All reads and mutations go through the separate `StateClient::request` and `Stat
 
 Each visible or buffered date has a `DayWidget` that owns only its optional `DayRecord`. The calendar derives the interest window from scroll position, requests newly relevant dates, and drops day widgets outside that range. Day widgets stay passive: matching `Day` values set their text and memberships, while `Event` values keep those memberships current.
 
-The calendar requests event records named by interested days and stores each response in a passive `CalendarEventWidget`. Lane assignment remains calendar-wide because it depends on all visible events; each event widget owns its week segments, endpoint geometry, colors, and painting.
+The calendar requests event records named by interested days and stores loaded `CalendarEvent` values directly. `CalendarEvent` implements `Widget` for matching user-event updates. Lane assignment remains calendar-wide because it depends on all visible events; the event module owns week segments, endpoint geometry, colors, and painting.
 
 The stored model corresponds to:
 
@@ -57,7 +57,7 @@ The application composes only these low-level `based` services:
 - `Sanscale`
 - `Input`
 
-Every application widget receives one concrete `AppContext`, including only `&mut dyn StateClient` for state access. Widget-scoped mirrors consume broadcast `Event::User` responses, while the backing store and event sender stay inside the host. The Windows host, calendar widget, day widgets, calendar-event widgets, editor widget, settings widget, reusable interactive surfaces, and GPU painter are separate modules. Buttons own their hover and press state. Calendar cells, events, endpoints, and text fields use the same explicit idle, hovered, pressed, and dragging surface states.
+Every application widget receives one concrete `AppContext`, including only `&mut dyn StateClient` for state access. Widget-scoped mirrors consume broadcast `Event::User` responses, while the backing store and event sender stay inside the host. The Windows host, calendar widget, day widgets, calendar events, editor widget, settings widget, reusable interactive surfaces, and GPU painter are separate modules. Buttons own their hover and press state. Calendar cells, events, endpoints, and text fields use the same explicit idle, hovered, pressed, and dragging surface states.
 
 Rounded surfaces are single GPU quads. The fragment shader computes the radius, border, and antialias coverage, so controls do not depend on CPU polygon tessellation.
 
