@@ -2,6 +2,8 @@ mod calendar;
 mod editor;
 mod paint;
 mod settings;
+mod text_area;
+mod text_edit;
 mod ui;
 
 pub(crate) use calendar::*;
