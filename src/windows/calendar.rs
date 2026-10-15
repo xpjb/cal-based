@@ -420,11 +420,12 @@ impl CalendarWidget {
                                 .to_owned();
                             self.editor.open_day(context, date, description);
                         }
-                        PressTarget::Event(id) | PressTarget::Endpoint { id, .. } => {
+                        PressTarget::Event(id) => {
                             if let Some(event) = context.model.calendar().event(id).cloned() {
                                 self.editor.open_event(context, event);
                             }
                         }
+                        PressTarget::Endpoint { .. } => {}
                     }
                 }
             }
