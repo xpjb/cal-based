@@ -3,6 +3,7 @@ use std::{ops::Range, time::Duration};
 use based::{
     ElementState, Event, EventFlow, HostEvent, InputEvent, Key, ModifiersState, MouseButton,
     NamedKey, ScrollDelta, Widget,
+    backend::winit::raw::window::CursorIcon,
     glam::{Vec2, Vec4},
     widget::sanscale::raw::{self as text, Caret, Motion, WordBoundaries},
 };
@@ -11,8 +12,12 @@ use chrono::NaiveDate;
 use ropey::Rope;
 
 use super::{
-    ACCENT, AppContext, GRID, MUTED, TEXT,
+    AppContext,
     paint::{HorizontalAlign, Rect, VerticalAlign},
+    ui::{
+        ACCENT, Button, ButtonRelease, DANGER_BUTTON, GRID, MUTED, NEUTRAL_BUTTON,
+        PRIMARY_BUTTON, StateColors, SurfaceState, SurfaceStyle, TEXT, paint_surface,
+    },
 };
 
 const BASE_FONT_SIZE: f32 = 18.0;
@@ -20,6 +25,20 @@ const CARET_PERIOD: Duration = Duration::from_millis(530);
 const EDITOR_BG: Vec4 = Vec4::new(0.075, 0.088, 0.108, 1.0);
 const INPUT_BG: Vec4 = Vec4::new(0.031, 0.038, 0.049, 1.0);
 const SELECTION: Vec4 = Vec4::new(0.17, 0.36, 0.68, 0.62);
+const INPUT_SURFACE: SurfaceStyle = SurfaceStyle {
+    fill: StateColors::new(
+        INPUT_BG,
+        Vec4::new(0.045, 0.055, 0.071, 1.0),
+        Vec4::new(0.038, 0.047, 0.061, 1.0),
+        Vec4::new(0.038, 0.047, 0.061, 1.0),
+    ),
+    border: StateColors::new(
+        GRID,
+        Vec4::new(0.35, 0.49, 0.67, 1.0),
+        ACCENT,
+        ACCENT,
+    ),
+};
 
 #[derive(Clone, Copy)]
 enum EditorTarget {
@@ -137,6 +156,9 @@ pub struct EditorWidget {
     modifiers: ModifiersState,
     last_input: based::web_time::Instant,
     blink_phase: u64,
+    save_button: Button,
+    cancel_button: Button,
+    delete_button: Button,
 }
 
 impl EditorWidget {
@@ -151,6 +173,9 @@ impl EditorWidget {
             modifiers: ModifiersState::empty(),
             last_input: based::web_time::Instant::now(),
             blink_phase: 0,
+            save_button: Button::default(),
+            cancel_button: Button::default(),
+            delete_button: Button::default(),
         }
     }
 
@@ -214,7 +239,11 @@ impl EditorWidget {
         self.handle = None;
         self.layout = None;
         self.selecting = false;
+        self.save_button.cancel();
+        self.cancel_button.cancel();
+        self.delete_button.cancel();
         context.set_ime_allowed(false);
+        context.set_cursor(CursorIcon::Default);
         context.request_redraw();
     }
 
@@ -325,6 +354,9 @@ impl Widget<AppContext<'_>, Event> for EditorWidget {
         }
 
         if matches!(event, Event::Host(HostEvent::RedrawRequested)) {
+            if let Some(point) = context.input.pointer() {
+                self.cursor = point;
+            }
             let viewport = context.viewport().as_vec2();
             let scale = context.scale_factor();
             let font_size = BASE_FONT_SIZE * scale;
@@ -377,6 +409,12 @@ impl Widget<AppContext<'_>, Event> for EditorWidget {
                 font_size,
             };
             self.layout = Some(layout);
+            self.save_button.set_rect(save);
+            self.cancel_button.set_rect(cancel);
+            self.delete_button.set_rect(delete.unwrap_or_default());
+            self.save_button.set_hover(self.cursor);
+            self.cancel_button.set_hover(self.cursor);
+            self.delete_button.set_hover(self.cursor);
 
             context.quad(
                 Rect::new(0.0, 0.0, viewport.x, viewport.y),
@@ -438,8 +476,21 @@ impl Widget<AppContext<'_>, Event> for EditorWidget {
                 VerticalAlign::Center,
                 false,
             );
-            context.rounded_rect(text_rect, 8.0 * scale, GRID);
-            context.rounded_rect(text_rect.inset(scale), 7.0 * scale, INPUT_BG);
+            let text_state = if self.selecting {
+                SurfaceState::Pressed
+            } else if text_rect.contains(self.cursor) {
+                SurfaceState::Hovered
+            } else {
+                SurfaceState::Idle
+            };
+            paint_surface(
+                context,
+                text_rect,
+                8.0 * scale,
+                scale,
+                text_state,
+                INPUT_SURFACE,
+            );
 
             let handle = self.shape(context, layout);
             if let Some(handle) = handle {
@@ -544,46 +595,13 @@ impl Widget<AppContext<'_>, Event> for EditorWidget {
                 );
             }
 
-            for (rect, label, fill) in [
-                (cancel, "CANCEL", Vec4::new(0.13, 0.15, 0.18, 1.0)),
-                (save, "SAVE", Vec4::new(0.25, 0.47, 0.72, 1.0)),
-            ] {
-                context.rounded_rect(
-                    rect,
-                    8.0 * scale,
-                    Vec4::new(0.32, 0.39, 0.49, 1.0),
-                );
-                context.rounded_rect(rect.inset(scale), 7.0 * scale, fill);
-                let _ = context.text(
-                    label,
-                    rect,
-                    13.0 * scale,
-                    TEXT,
-                    HorizontalAlign::Center,
-                    VerticalAlign::Center,
-                    false,
-                );
-            }
-            if let Some(delete) = delete {
-                context.rounded_rect(
-                    delete,
-                    8.0 * scale,
-                    Vec4::new(0.57, 0.29, 0.35, 1.0),
-                );
-                context.rounded_rect(
-                    delete.inset(scale),
-                    7.0 * scale,
-                    Vec4::new(0.35, 0.16, 0.20, 1.0),
-                );
-                let _ = context.text(
-                    "DELETE",
-                    delete,
-                    13.0 * scale,
-                    Vec4::new(1.0, 0.82, 0.84, 1.0),
-                    HorizontalAlign::Center,
-                    VerticalAlign::Center,
-                    false,
-                );
+            self.cancel_button
+                .paint(context, "CANCEL", 13.0, scale, NEUTRAL_BUTTON);
+            self.save_button
+                .paint(context, "SAVE", 13.0, scale, PRIMARY_BUTTON);
+            if delete.is_some() {
+                self.delete_button
+                    .paint(context, "DELETE", 13.0, scale, DANGER_BUTTON);
             }
             return EventFlow::Consumed;
         }
@@ -600,15 +618,40 @@ impl Widget<AppContext<'_>, Event> for EditorWidget {
                     + CARET_PERIOD * u32::try_from(phase + 1).unwrap_or(u32::MAX);
                 context.wake_at(next);
             }
-            Event::Host(HostEvent::Focused { focused: false }) => self.selecting = false,
+            Event::Host(HostEvent::Focused { focused: false }) => {
+                self.selecting = false;
+                self.save_button.cancel();
+                self.cancel_button.cancel();
+                self.delete_button.cancel();
+                context.set_cursor(CursorIcon::Default);
+                context.request_redraw();
+            }
             Event::Input(InputEvent::ModifiersChanged { modifiers }) => {
                 self.modifiers = *modifiers;
             }
             Event::Input(InputEvent::CursorMoved { position, .. }) => {
                 self.cursor = position.as_vec2();
+                let buttons_changed = self.save_button.pointer_moved(u64::MAX, self.cursor, true)
+                    | self.cancel_button.pointer_moved(u64::MAX, self.cursor, true)
+                    | self.delete_button.pointer_moved(u64::MAX, self.cursor, true);
                 if self.selecting {
                     self.place_at_cursor(context, true);
+                } else if buttons_changed {
+                    context.request_redraw();
                 }
+                let cursor = self.layout.map_or(CursorIcon::Default, |layout| {
+                    if layout.text.contains(self.cursor) {
+                        CursorIcon::Text
+                    } else if layout.save.contains(self.cursor)
+                        || layout.cancel.contains(self.cursor)
+                        || layout.delete.is_some_and(|rect| rect.contains(self.cursor))
+                    {
+                        CursorIcon::Pointer
+                    } else {
+                        CursorIcon::Default
+                    }
+                });
+                context.set_cursor(cursor);
             }
             Event::Input(InputEvent::MouseButton {
                 button: MouseButton::Left,
@@ -621,11 +664,35 @@ impl Widget<AppContext<'_>, Event> for EditorWidget {
                 let Some(layout) = self.layout else {
                     return EventFlow::Consumed;
                 };
-                if layout.save.contains(self.cursor) {
+                if self.save_button.press(u64::MAX, self.cursor)
+                    || self.cancel_button.press(u64::MAX, self.cursor)
+                    || (layout.delete.is_some()
+                        && self.delete_button.press(u64::MAX, self.cursor))
+                {
+                    context.request_redraw();
+                } else if layout.text.contains(self.cursor) {
+                    self.selecting = true;
+                    self.place_at_cursor(context, self.modifiers.shift_key());
+                }
+            }
+            Event::Input(InputEvent::MouseButton {
+                button: MouseButton::Left,
+                state: ElementState::Released,
+                ..
+            }) => {
+                if let Some(point) = context.input.pointer() {
+                    self.cursor = point;
+                }
+                self.selecting = false;
+                context.request_redraw();
+                let save = self.save_button.release(u64::MAX, self.cursor);
+                let cancel = self.cancel_button.release(u64::MAX, self.cursor);
+                let delete = self.delete_button.release(u64::MAX, self.cursor);
+                if save == ButtonRelease::Activated {
                     self.save(context);
-                } else if layout.cancel.contains(self.cursor) {
+                } else if cancel == ButtonRelease::Activated {
                     self.close(context);
-                } else if layout.delete.is_some_and(|rect| rect.contains(self.cursor)) {
+                } else if delete == ButtonRelease::Activated {
                     let target = self.session.as_ref().map(|session| session.target);
                     if let Some(EditorTarget::Event { id, .. }) = target {
                         match context.model.transact(vec![CalendarTxn::DeleteEvent { id }]) {
@@ -638,16 +705,13 @@ impl Widget<AppContext<'_>, Event> for EditorWidget {
                             }
                         }
                     }
-                } else if layout.text.contains(self.cursor) {
-                    self.selecting = true;
-                    self.place_at_cursor(context, self.modifiers.shift_key());
+                } else if save != ButtonRelease::Ignored
+                    || cancel != ButtonRelease::Ignored
+                    || delete != ButtonRelease::Ignored
+                {
+                    context.request_redraw();
                 }
             }
-            Event::Input(InputEvent::MouseButton {
-                button: MouseButton::Left,
-                state: ElementState::Released,
-                ..
-            }) => self.selecting = false,
             Event::Input(InputEvent::MouseWheel { delta, .. }) => {
                 if let (Some(layout), Some(session)) = (self.layout, &mut self.session)
                     && layout.text.contains(self.cursor)
