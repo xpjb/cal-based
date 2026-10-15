@@ -1,4 +1,4 @@
-use std::{f32::consts::FRAC_PI_2, mem::size_of};
+use std::mem::size_of;
 
 use based::{
     glam::{UVec2, Vec2, Vec4},
@@ -72,16 +72,21 @@ pub enum VerticalAlign {
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct Vertex {
     position: [f32; 2],
-    color: [f32; 4],
+    local: [f32; 2],
+    half_size: [f32; 2],
+    radius: f32,
+    border_width: f32,
+    fill: [f32; 4],
+    border: [f32; 4],
 }
 
 enum PaintCommand {
-    Quads { first: u32, vertices: u32 },
+    Surfaces { first: u32, vertices: u32 },
     Text(text::Draw),
 }
 
 enum PreparedCommand {
-    Quads { first: u32, vertices: u32 },
+    Surfaces { first: u32, vertices: u32 },
     Text(text::Batch),
 }
 
@@ -101,87 +106,87 @@ impl FrameCanvas {
     }
 
     pub fn quad(&mut self, rect: Rect, color: Vec4) {
-        if rect.size.x <= 0.0 || rect.size.y <= 0.0 {
-            return;
-        }
-        let min = rect.position;
-        let max = rect.position + rect.size;
-        self.triangles(
-            &[
-                min,
-                Vec2::new(max.x, min.y),
-                max,
-                min,
-                max,
-                Vec2::new(min.x, max.y),
-            ],
-            color,
-        );
+        self.push_rect(rect, 0.0, 0.0, color, Vec4::ZERO);
     }
 
     pub fn rounded_rect(&mut self, rect: Rect, radius: f32, color: Vec4) {
-        if rect.size.x <= 0.0 || rect.size.y <= 0.0 || color.w <= 0.0 {
-            return;
-        }
-        let radius = radius.min(rect.size.x * 0.5).min(rect.size.y * 0.5);
-        if radius <= 0.5 {
-            self.quad(rect, color);
-            return;
-        }
-        const CORNER_STEPS: usize = 5;
-        let mut points = Vec::with_capacity((CORNER_STEPS + 1) * 4);
-        let centers = [
-            Vec2::new(rect.right() - radius, rect.position.y + radius),
-            Vec2::new(rect.right() - radius, rect.bottom() - radius),
-            Vec2::new(rect.position.x + radius, rect.bottom() - radius),
-            Vec2::new(rect.position.x + radius, rect.position.y + radius),
-        ];
-        for (corner, center) in centers.into_iter().enumerate() {
-            let start = -FRAC_PI_2 + corner as f32 * FRAC_PI_2;
-            for step in 0..=CORNER_STEPS {
-                let angle = start + step as f32 / CORNER_STEPS as f32 * FRAC_PI_2;
-                points.push(center + Vec2::new(angle.cos(), angle.sin()) * radius);
-            }
-        }
-        let center = rect.center();
-        let mut triangles = Vec::with_capacity(points.len() * 3);
-        for index in 0..points.len() {
-            triangles.extend_from_slice(&[
-                center,
-                points[index],
-                points[(index + 1) % points.len()],
-            ]);
-        }
-        self.triangles(&triangles, color);
+        self.push_rect(rect, radius, 0.0, color, Vec4::ZERO);
     }
 
-    fn triangles(&mut self, points: &[Vec2], color: Vec4) {
-        if points.len() < 3 || color.w <= 0.0 {
+    pub fn surface(
+        &mut self,
+        rect: Rect,
+        radius: f32,
+        border_width: f32,
+        fill: Vec4,
+        border: Vec4,
+    ) {
+        self.push_rect(rect, radius, border_width, fill, border);
+    }
+
+    fn push_rect(
+        &mut self,
+        rect: Rect,
+        radius: f32,
+        border_width: f32,
+        fill: Vec4,
+        border: Vec4,
+    ) {
+        if rect.size.x <= 0.0
+            || rect.size.y <= 0.0
+            || (fill.w <= 0.0 && border.w <= 0.0)
+        {
             return;
         }
-        debug_assert!(points.len().is_multiple_of(3));
+        let radius = radius
+            .max(0.0)
+            .min(rect.size.x * 0.5)
+            .min(rect.size.y * 0.5);
+        let border_width = border_width
+            .max(0.0)
+            .min(rect.size.x * 0.5)
+            .min(rect.size.y * 0.5);
+        let feather = if radius > 0.0 || border_width > 0.0 {
+            1.0
+        } else {
+            0.0
+        };
+        let half_size = rect.size * 0.5;
+        let extent = half_size + Vec2::splat(feather);
+        let center = rect.center();
+        let min = center - extent;
+        let max = center + extent;
         let viewport = self.viewport.as_vec2().max(Vec2::ONE);
         let clip = |point: Vec2| {
             point / viewport * Vec2::new(2.0, -2.0) + Vec2::new(-1.0, 1.0)
         };
         let first = self.vertices.len() as u32;
-        self.vertices.extend(points.iter().map(|point| Vertex {
-            position: clip(*point).to_array(),
-            color: color.to_array(),
+        let corners = [
+            (min, -extent),
+            (Vec2::new(max.x, min.y), Vec2::new(extent.x, -extent.y)),
+            (max, extent),
+            (min, -extent),
+            (max, extent),
+            (Vec2::new(min.x, max.y), Vec2::new(-extent.x, extent.y)),
+        ];
+        self.vertices.extend(corners.into_iter().map(|(position, local)| Vertex {
+            position: clip(position).to_array(),
+            local: local.to_array(),
+            half_size: half_size.to_array(),
+            radius,
+            border_width,
+            fill: fill.to_array(),
+            border: border.to_array(),
         }));
-        let added = points.len() as u32;
-        if let Some(PaintCommand::Quads {
+        if let Some(PaintCommand::Surfaces {
             first: previous,
             vertices,
         }) = self.commands.last_mut()
             && *previous + *vertices == first
         {
-            *vertices += added;
+            *vertices += 6;
         } else {
-            self.commands.push(PaintCommand::Quads {
-                first,
-                vertices: added,
-            });
+            self.commands.push(PaintCommand::Surfaces { first, vertices: 6 });
         }
     }
 
@@ -309,8 +314,8 @@ impl Renderer {
         let mut index = 0;
         while index < canvas.commands.len() {
             match canvas.commands[index] {
-                PaintCommand::Quads { first, vertices } => {
-                    prepared.push(PreparedCommand::Quads { first, vertices });
+                PaintCommand::Surfaces { first, vertices } => {
+                    prepared.push(PreparedCommand::Surfaces { first, vertices });
                     index += 1;
                 }
                 PaintCommand::Text(_) => {
@@ -324,7 +329,7 @@ impl Renderer {
                         .iter()
                         .filter_map(|command| match command {
                             PaintCommand::Text(draw) => Some(*draw),
-                            PaintCommand::Quads { .. } => None,
+                            PaintCommand::Surfaces { .. } => None,
                         })
                         .collect();
                     prepared.push(PreparedCommand::Text(service.raw.prepare(
@@ -355,7 +360,7 @@ impl Renderer {
         let viewport = canvas.viewport;
         for command in prepared {
             match command {
-                PreparedCommand::Quads { first, vertices } => {
+                PreparedCommand::Surfaces { first, vertices } => {
                     pass.set_scissor_rect(0, 0, viewport.x.max(1), viewport.y.max(1));
                     pass.set_pipeline(&self.pipeline);
                     pass.set_vertex_buffer(0, self.buffer.slice(..));
@@ -402,20 +407,65 @@ fn create_pipeline(gpu: &Wgpu) -> wgpu::RenderPipeline {
     const SHADER: &str = r#"
 struct VertexOutput {
     @builtin(position) position: vec4f,
-    @location(0) color: vec4f,
+    @location(0) local: vec2f,
+    @location(1) half_size: vec2f,
+    @location(2) radius: f32,
+    @location(3) border_width: f32,
+    @location(4) fill: vec4f,
+    @location(5) border: vec4f,
 };
 
+fn signed_distance(point: vec2f, half_size: vec2f, radius: f32) -> f32 {
+    let corner = abs(point) - half_size + vec2f(radius);
+    return length(max(corner, vec2f(0.0)))
+        + min(max(corner.x, corner.y), 0.0)
+        - radius;
+}
+
 @vertex
-fn vertex(@location(0) position: vec2f, @location(1) color: vec4f) -> VertexOutput {
+fn vertex(
+    @location(0) position: vec2f,
+    @location(1) local: vec2f,
+    @location(2) half_size: vec2f,
+    @location(3) radius: f32,
+    @location(4) border_width: f32,
+    @location(5) fill: vec4f,
+    @location(6) border: vec4f,
+) -> VertexOutput {
     var output: VertexOutput;
     output.position = vec4f(position, 0.0, 1.0);
-    output.color = color;
+    output.local = local;
+    output.half_size = half_size;
+    output.radius = radius;
+    output.border_width = border_width;
+    output.fill = fill;
+    output.border = border;
     return output;
 }
 
 @fragment
 fn fragment(input: VertexOutput) -> @location(0) vec4f {
-    return input.color;
+    if input.radius <= 0.0 && input.border_width <= 0.0 {
+        return input.fill;
+    }
+    let outer_distance = signed_distance(input.local, input.half_size, input.radius);
+    let width = max(fwidth(outer_distance), 0.0001);
+    let outer = clamp(0.5 - outer_distance / width, 0.0, 1.0);
+    let inner_half = max(
+        input.half_size - vec2f(input.border_width),
+        vec2f(0.0001),
+    );
+    let inner_radius = max(input.radius - input.border_width, 0.0);
+    let inner_distance = signed_distance(input.local, inner_half, inner_radius);
+    let inner = clamp(0.5 - inner_distance / width, 0.0, 1.0);
+    let border_coverage = max(outer - inner, 0.0);
+    let fill_alpha = input.fill.a * inner;
+    let border_alpha = input.border.a * border_coverage;
+    let alpha = fill_alpha + border_alpha;
+    let premultiplied = input.fill.rgb * fill_alpha
+        + input.border.rgb * border_alpha;
+    let color = premultiplied / max(alpha, 0.0001);
+    return vec4f(color, alpha);
 }
 "#;
     let shader = gpu.device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -427,7 +477,15 @@ fn fragment(input: VertexOutput) -> @location(0) vec4f {
         bind_group_layouts: &[],
         immediate_size: 0,
     });
-    let attributes = wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x4];
+    let attributes = wgpu::vertex_attr_array![
+        0 => Float32x2,
+        1 => Float32x2,
+        2 => Float32x2,
+        3 => Float32,
+        4 => Float32,
+        5 => Float32x4,
+        6 => Float32x4,
+    ];
     gpu.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("cal-based-rectangles"),
         layout: Some(&layout),
