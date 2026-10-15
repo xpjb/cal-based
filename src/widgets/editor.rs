@@ -6,7 +6,7 @@ use based::{
     NamedKey, ScrollDelta, Widget,
     backend::winit::raw::window::CursorIcon,
     glam::{Vec2, Vec4},
-    widget::sanscale::raw::{self as text, Caret, Motion, WordBoundaries},
+    widget::sanscale::raw::{self as text, Caret, Layout, Motion, WordBoundaries},
 };
 use chrono::NaiveDate;
 use ropey::Rope;
@@ -123,7 +123,69 @@ impl Session {
             self.anchor = None;
         }
         self.caret = caret;
+    }
+
+    fn motion(&mut self, layout: &Layout, motion: Motion, select: bool) {
+        let caret = layout.caret_move(
+            self.caret,
+            motion,
+            &mut self.goal,
+            &self.document,
+        );
+        self.place(caret, select);
+    }
+
+    fn replace(&mut self, range: Range<usize>, insert: &str) {
+        let at = range.start;
+        self.document.replace(range, insert);
+        self.edit_placed(at + insert.len());
+    }
+
+    fn insert(&mut self, text: &str) {
+        let byte = self.caret.byte_index;
+        let range = self.selection().unwrap_or(byte..byte);
+        self.replace(range, text);
+    }
+
+    fn backspace(&mut self, layout: &Layout) -> bool {
+        let byte = self.caret.byte_index;
+        let range = self
+            .selection()
+            .or_else(|| layout.prev_caret_stop(byte).map(|start| start..byte));
+        let Some(range) = range else {
+            return false;
+        };
+        self.replace(range, "");
+        true
+    }
+
+    fn delete(&mut self, layout: &Layout) -> bool {
+        let byte = self.caret.byte_index;
+        let range = self
+            .selection()
+            .or_else(|| layout.next_caret_stop(byte).map(|end| byte..end));
+        let Some(range) = range else {
+            return false;
+        };
+        self.replace(range, "");
+        true
+    }
+
+    fn edit_placed(&mut self, byte: usize) {
+        self.caret.byte_index = byte;
+        self.anchor = None;
         self.goal = None;
+    }
+
+    fn selected_text(&self) -> Option<String> {
+        let range = self.selection()?;
+        let chars = self.document.rope.byte_to_char(range.start)
+            ..self.document.rope.byte_to_char(range.end);
+        Some(self.document.rope.slice(chars).to_string())
+    }
+
+    fn settle(&mut self, layout: &Layout) {
+        self.caret = layout.caret_after_edit(self.caret.byte_index);
     }
 }
 
@@ -308,12 +370,13 @@ impl EditorWidget {
                 select,
             );
         }
+        session.goal = None;
         self.last_input = context.now();
         self.blink_phase = 0;
         context.request_redraw();
     }
 
-    fn keep_caret_visible(&mut self, context: &mut AppContext<'_>) {
+    fn keep_caret_visible(&mut self, context: &mut AppContext<'_>, edited: bool) {
         let Some(layout) = self.layout else {
             return;
         };
@@ -327,7 +390,11 @@ impl EditorWidget {
             return;
         };
         let text_layout = context.text.raw.measure(handle);
-        session.caret = text_layout.clamp_caret(session.caret);
+        if edited {
+            session.settle(text_layout);
+        } else {
+            session.caret = text_layout.clamp_caret(session.caret);
+        }
         let caret = text_layout.caret_rect(session.caret);
         let top = 11.0 * layout.scale + caret.y_em * layout.font_size - session.scroll;
         let bottom = top + caret.height_em.max(1.0) * layout.font_size;
@@ -716,19 +783,12 @@ impl Widget<AppContext<'_>, Event> for EditorWidget {
                 let Some(session) = &mut self.session else {
                     return EventFlow::Consumed;
                 };
-                let range = session
-                    .selection()
-                    .unwrap_or(session.caret.byte_index..session.caret.byte_index);
-                let at = range.start;
                 let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
-                session.document.replace(range, &normalized);
-                session.caret.byte_index = at + normalized.len();
-                session.anchor = None;
-                session.goal = None;
+                session.insert(&normalized);
                 self.handle = None;
                 self.last_input = context.now();
                 self.blink_phase = 0;
-                self.keep_caret_visible(context);
+                self.keep_caret_visible(context, true);
                 context.request_redraw();
             }
             Event::Input(InputEvent::Keyboard(key)) if key.state == ElementState::Pressed => {
@@ -738,9 +798,7 @@ impl Widget<AppContext<'_>, Event> for EditorWidget {
                     self.close(context);
                     return EventFlow::Consumed;
                 }
-                if ctrl
-                    && matches!(key.logical_key, Key::Named(NamedKey::Enter))
-                {
+                if ctrl && matches!(key.logical_key, Key::Named(NamedKey::Enter)) {
                     self.save(context);
                     return EventFlow::Consumed;
                 }
@@ -750,252 +808,91 @@ impl Widget<AppContext<'_>, Event> for EditorWidget {
                 let mut moved = false;
                 if let Some(session) = &mut self.session {
                     let text_layout = handle.map(|handle| context.text.raw.measure(handle));
-                    match &key.logical_key {
-                        Key::Named(NamedKey::ArrowLeft) if ctrl => {
-                            if let Some(layout) = text_layout {
-                                let caret = layout.caret_move(
-                                    session.caret,
-                                    Motion::WordLeft,
-                                    &mut session.goal,
-                                    &session.document,
-                                );
-                                session.place(caret, shift);
-                                moved = true;
-                            }
+                    let motion = match &key.logical_key {
+                        Key::Named(NamedKey::ArrowLeft) if ctrl => Some(Motion::WordLeft),
+                        Key::Named(NamedKey::ArrowRight) if ctrl => Some(Motion::WordRight),
+                        Key::Named(NamedKey::ArrowLeft) => Some(Motion::Left),
+                        Key::Named(NamedKey::ArrowRight) => Some(Motion::Right),
+                        Key::Named(NamedKey::ArrowUp) => Some(Motion::Up),
+                        Key::Named(NamedKey::ArrowDown) => Some(Motion::Down),
+                        Key::Named(NamedKey::Home) if ctrl => Some(Motion::DocStart),
+                        Key::Named(NamedKey::End) if ctrl => Some(Motion::DocEnd),
+                        Key::Named(NamedKey::Home) => Some(Motion::Home),
+                        Key::Named(NamedKey::End) => Some(Motion::End),
+                        _ => None,
+                    };
+                    if let Some(motion) = motion {
+                        if let Some(layout) = text_layout {
+                            session.motion(layout, motion, shift);
+                            moved = true;
                         }
-                        Key::Named(NamedKey::ArrowRight) if ctrl => {
-                            if let Some(layout) = text_layout {
-                                let caret = layout.caret_move(
-                                    session.caret,
-                                    Motion::WordRight,
-                                    &mut session.goal,
-                                    &session.document,
-                                );
-                                session.place(caret, shift);
-                                moved = true;
-                            }
-                        }
-                        Key::Named(NamedKey::ArrowLeft) => {
-                            if let Some(layout) = text_layout {
-                                let caret = layout.caret_move(
-                                    session.caret,
-                                    Motion::Left,
-                                    &mut session.goal,
-                                    &session.document,
-                                );
-                                session.place(caret, shift);
-                                moved = true;
-                            }
-                        }
-                        Key::Named(NamedKey::ArrowRight) => {
-                            if let Some(layout) = text_layout {
-                                let caret = layout.caret_move(
-                                    session.caret,
-                                    Motion::Right,
-                                    &mut session.goal,
-                                    &session.document,
-                                );
-                                session.place(caret, shift);
-                                moved = true;
-                            }
-                        }
-                        Key::Named(NamedKey::ArrowUp) => {
-                            if let Some(layout) = text_layout {
-                                let caret = layout.caret_move(
-                                    session.caret,
-                                    Motion::Up,
-                                    &mut session.goal,
-                                    &session.document,
-                                );
-                                session.place(caret, shift);
-                                moved = true;
-                            }
-                        }
-                        Key::Named(NamedKey::ArrowDown) => {
-                            if let Some(layout) = text_layout {
-                                let caret = layout.caret_move(
-                                    session.caret,
-                                    Motion::Down,
-                                    &mut session.goal,
-                                    &session.document,
-                                );
-                                session.place(caret, shift);
-                                moved = true;
-                            }
-                        }
-                        Key::Named(NamedKey::Home) if ctrl => {
-                            if let Some(layout) = text_layout {
-                                let caret = layout.caret_move(
-                                    session.caret,
-                                    Motion::DocStart,
-                                    &mut session.goal,
-                                    &session.document,
-                                );
-                                session.place(caret, shift);
-                                moved = true;
-                            }
-                        }
-                        Key::Named(NamedKey::End) if ctrl => {
-                            if let Some(layout) = text_layout {
-                                let caret = layout.caret_move(
-                                    session.caret,
-                                    Motion::DocEnd,
-                                    &mut session.goal,
-                                    &session.document,
-                                );
-                                session.place(caret, shift);
-                                moved = true;
-                            }
-                        }
-                        Key::Named(NamedKey::Home) => {
-                            if let Some(layout) = text_layout {
-                                let caret = layout.caret_move(
-                                    session.caret,
-                                    Motion::Home,
-                                    &mut session.goal,
-                                    &session.document,
-                                );
-                                session.place(caret, shift);
-                                moved = true;
-                            }
-                        }
-                        Key::Named(NamedKey::End) => {
-                            if let Some(layout) = text_layout {
-                                let caret = layout.caret_move(
-                                    session.caret,
-                                    Motion::End,
-                                    &mut session.goal,
-                                    &session.document,
-                                );
-                                session.place(caret, shift);
-                                moved = true;
-                            }
-                        }
-                        Key::Named(NamedKey::Backspace) => {
-                            let range = session.selection().or_else(|| {
-                                text_layout.and_then(|layout| {
-                                    layout
-                                        .prev_caret_stop(session.caret.byte_index)
-                                        .map(|start| start..session.caret.byte_index)
-                                })
-                            });
-                            if let Some(range) = range {
-                                let at = range.start;
-                                session.document.replace(range, "");
-                                session.caret.byte_index = at;
-                                session.anchor = None;
-                                session.goal = None;
-                                edited = true;
-                            }
-                        }
-                        Key::Named(NamedKey::Delete) => {
-                            let range = session.selection().or_else(|| {
-                                text_layout.and_then(|layout| {
-                                    layout
-                                        .next_caret_stop(session.caret.byte_index)
-                                        .map(|end| session.caret.byte_index..end)
-                                })
-                            });
-                            if let Some(range) = range {
-                                let at = range.start;
-                                session.document.replace(range, "");
-                                session.caret.byte_index = at;
-                                session.anchor = None;
-                                session.goal = None;
-                                edited = true;
-                            }
-                        }
-                        Key::Named(NamedKey::Enter) => {
-                            let range = session
-                                .selection()
-                                .unwrap_or(session.caret.byte_index..session.caret.byte_index);
-                            let at = range.start;
-                            session.document.replace(range, "\n");
-                            session.caret.byte_index = at + 1;
-                            session.anchor = None;
-                            session.goal = None;
-                            edited = true;
-                        }
-                        Key::Named(NamedKey::Tab) => {
-                            let range = session
-                                .selection()
-                                .unwrap_or(session.caret.byte_index..session.caret.byte_index);
-                            let at = range.start;
-                            session.document.replace(range, "    ");
-                            session.caret.byte_index = at + 4;
-                            session.anchor = None;
-                            session.goal = None;
-                            edited = true;
-                        }
-                        Key::Character(character) if ctrl => match character.as_str() {
-                            "a" | "A" => {
-                                session.anchor = Some(0);
-                                session.caret = Caret {
-                                    byte_index: session.document.rope.len_bytes(),
-                                    line_index: usize::MAX,
-                                };
-                                session.goal = None;
-                                moved = true;
-                            }
-                            "c" | "C" => {
-                                if let Some(range) = session.selection() {
-                                    let chars = session.document.rope.byte_to_char(range.start)
-                                        ..session.document.rope.byte_to_char(range.end);
-                                    let selected = session.document.rope.slice(chars).to_string();
-                                    let _ = arboard::Clipboard::new()
-                                        .and_then(|mut clipboard| clipboard.set_text(selected));
+                    } else {
+                        match &key.logical_key {
+                            Key::Named(NamedKey::Backspace) => {
+                                if let Some(layout) = text_layout {
+                                    edited = session.backspace(layout);
                                 }
                             }
-                            "x" | "X" => {
-                                if let Some(range) = session.selection() {
-                                    let chars = session.document.rope.byte_to_char(range.start)
-                                        ..session.document.rope.byte_to_char(range.end);
-                                    let selected = session.document.rope.slice(chars).to_string();
-                                    if arboard::Clipboard::new()
-                                        .and_then(|mut clipboard| clipboard.set_text(selected))
-                                        .is_ok()
+                            Key::Named(NamedKey::Delete) => {
+                                if let Some(layout) = text_layout {
+                                    edited = session.delete(layout);
+                                }
+                            }
+                            Key::Named(NamedKey::Enter) => {
+                                session.insert("\n");
+                                edited = true;
+                            }
+                            Key::Named(NamedKey::Tab) => {
+                                session.insert("    ");
+                                edited = true;
+                            }
+                            Key::Character(character) if ctrl => match character.as_str() {
+                                "a" | "A" => {
+                                    session.anchor = Some(0);
+                                    session.caret = Caret {
+                                        byte_index: session.document.rope.len_bytes(),
+                                        line_index: usize::MAX,
+                                    };
+                                    session.goal = None;
+                                    moved = true;
+                                }
+                                "c" | "C" => {
+                                    if let Some(selected) = session.selected_text() {
+                                        let _ = arboard::Clipboard::new().and_then(
+                                            |mut clipboard| clipboard.set_text(selected),
+                                        );
+                                    }
+                                }
+                                "x" | "X" => {
+                                    if let Some(selected) = session.selected_text()
+                                        && arboard::Clipboard::new()
+                                            .and_then(|mut clipboard| clipboard.set_text(selected))
+                                            .is_ok()
+                                        && let Some(range) = session.selection()
                                     {
-                                        let at = range.start;
-                                        session.document.replace(range, "");
-                                        session.caret.byte_index = at;
-                                        session.anchor = None;
-                                        session.goal = None;
+                                        session.replace(range, "");
                                         edited = true;
                                     }
                                 }
-                            }
-                            "v" | "V" => {
-                                if let Ok(value) = arboard::Clipboard::new()
-                                    .and_then(|mut clipboard| clipboard.get_text())
+                                "v" | "V" => {
+                                    if let Ok(value) = arboard::Clipboard::new()
+                                        .and_then(|mut clipboard| clipboard.get_text())
+                                    {
+                                        let value = value.replace("\r\n", "\n").replace('\r', "\n");
+                                        session.insert(&value);
+                                        edited = true;
+                                    }
+                                }
+                                _ => {}
+                            },
+                            _ => {
+                                if !ctrl
+                                    && let Some(value) = &key.text
+                                    && value.chars().all(|character| !character.is_control())
                                 {
-                                    let value = value.replace("\r\n", "\n").replace('\r', "\n");
-                                    let range = session.selection().unwrap_or(
-                                        session.caret.byte_index..session.caret.byte_index,
-                                    );
-                                    let at = range.start;
-                                    session.document.replace(range, &value);
-                                    session.caret.byte_index = at + value.len();
-                                    session.anchor = None;
-                                    session.goal = None;
+                                    session.insert(value);
                                     edited = true;
                                 }
-                            }
-                            _ => {}
-                        },
-                        _ => {
-                            if !ctrl
-                                && let Some(value) = &key.text
-                                && value.chars().all(|character| !character.is_control())
-                            {
-                                let range = session.selection().unwrap_or(
-                                    session.caret.byte_index..session.caret.byte_index,
-                                );
-                                let at = range.start;
-                                session.document.replace(range, value);
-                                session.caret.byte_index = at + value.len();
-                                session.anchor = None;
-                                session.goal = None;
-                                edited = true;
                             }
                         }
                     }
@@ -1006,7 +903,7 @@ impl Widget<AppContext<'_>, Event> for EditorWidget {
                 if edited || moved {
                     self.last_input = context.now();
                     self.blink_phase = 0;
-                    self.keep_caret_visible(context);
+                    self.keep_caret_visible(context, edited);
                     context.request_redraw();
                 }
             }
