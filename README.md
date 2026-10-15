@@ -57,7 +57,7 @@ The application composes only these low-level `based` services:
 - `Sanscale`
 - `Input`
 
-Every application widget receives one concrete `AppContext`, including only `&mut dyn StateClient` for state access. Widget-scoped mirrors consume broadcast `Event::User` responses, while the backing store and event sender stay inside the host. The Windows host, calendar widget, day widgets, calendar events, editor widget, settings widget, reusable interactive surfaces, and GPU painter are separate modules. Buttons own their hover and press state. Calendar cells, events, endpoints, and text fields use the same explicit idle, hovered, pressed, and dragging surface states.
+Every application widget receives one concrete `AppContext`, including only `&mut dyn StateClient` for state access. Widget-scoped mirrors consume broadcast `Event::User` responses, while the backing store and event sender stay inside `App`. The Windows app shell, calendar widget, day widgets, calendar events, editor widget, settings widget, reusable interactive surfaces, and GPU painter are separate modules. Buttons own their hover and press state. Calendar cells, events, endpoints, and text fields use the same explicit idle, hovered, pressed, and dragging surface states.
 
 Rounded surfaces are single GPU quads. The fragment shader computes the radius, border, and antialias coverage, so controls do not depend on CPU polygon tessellation.
 

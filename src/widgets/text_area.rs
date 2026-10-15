@@ -132,9 +132,9 @@ impl TextArea {
                 select,
             );
         }
-        self.last_input = context.now();
+        self.last_input = context.now;
         self.blink_phase = 0;
-        context.request_redraw();
+        context.window.request_redraw();
     }
 
     fn keep_caret_visible(&mut self, context: &mut AppContext<'_>, edited: bool) {
@@ -230,7 +230,7 @@ impl Widget<AppContext<'_>, AppEvent> for TextArea {
                     Vec4::new(0.86, 0.88, 0.91, 1.0),
                     layout.rect.inset(2.0 * layout.scale),
                 );
-                let phase = context.now().duration_since(self.last_input).as_millis() as u64
+                let phase = context.now.duration_since(self.last_input).as_millis() as u64
                     / CARET_PERIOD.as_millis() as u64;
                 if phase.is_multiple_of(2)
                     && let Some(caret_rect) = caret_rect
@@ -248,7 +248,7 @@ impl Widget<AppContext<'_>, AppEvent> for TextArea {
                     VerticalAlign::Top,
                     false,
                 );
-                let phase = context.now().duration_since(self.last_input).as_millis() as u64
+                let phase = context.now.duration_since(self.last_input).as_millis() as u64
                     / CARET_PERIOD.as_millis() as u64;
                 if phase.is_multiple_of(2) {
                     context.quad(
@@ -267,11 +267,11 @@ impl Widget<AppContext<'_>, AppEvent> for TextArea {
 
         match event {
             Event::Host(HostEvent::AboutToWait) => {
-                let elapsed = context.now().duration_since(self.last_input);
+                let elapsed = context.now.duration_since(self.last_input);
                 let phase = (elapsed.as_millis() / CARET_PERIOD.as_millis()) as u64;
                 if phase != self.blink_phase {
                     self.blink_phase = phase;
-                    context.request_redraw();
+                    context.window.request_redraw();
                 }
                 let next = self.last_input
                     + CARET_PERIOD * u32::try_from(phase + 1).unwrap_or(u32::MAX);
@@ -281,7 +281,7 @@ impl Widget<AppContext<'_>, AppEvent> for TextArea {
                 self.modifiers = ModifiersState::empty();
                 if self.selecting {
                     self.selecting = false;
-                    context.request_redraw();
+                    context.window.request_redraw();
                 }
             }
             Event::Input(InputEvent::CursorMoved { position, .. }) => {
@@ -292,7 +292,7 @@ impl Widget<AppContext<'_>, AppEvent> for TextArea {
                     return EventFlow::Consumed;
                 }
                 if hovered != layout.rect.contains(self.cursor) {
-                    context.request_redraw();
+                    context.window.request_redraw();
                 }
                 if layout.rect.contains(self.cursor) {
                     return EventFlow::Consumed;
@@ -322,7 +322,7 @@ impl Widget<AppContext<'_>, AppEvent> for TextArea {
                 }
                 if self.selecting {
                     self.selecting = false;
-                    context.request_redraw();
+                    context.window.request_redraw();
                     return EventFlow::Consumed;
                 }
             }
@@ -333,16 +333,16 @@ impl Widget<AppContext<'_>, AppEvent> for TextArea {
                         ScrollDelta::Pixels { delta } => delta.y as f32,
                     };
                     self.scroll = (self.scroll - amount).max(0.0);
-                    context.request_redraw();
+                    context.window.request_redraw();
                     return EventFlow::Consumed;
                 }
             }
             Event::Input(InputEvent::InputMethod(based::InputMethodEvent::Commit { text })) => {
                 self.edit.insert_normalized(text);
-                self.last_input = context.now();
+                self.last_input = context.now;
                 self.blink_phase = 0;
                 self.keep_caret_visible(context, true);
-                context.request_redraw();
+                context.window.request_redraw();
                 return EventFlow::Consumed;
             }
             Event::Input(InputEvent::Keyboard(key)) if key.state == ElementState::Pressed => {
@@ -444,10 +444,10 @@ impl Widget<AppContext<'_>, AppEvent> for TextArea {
                     }
                 }
                 if edited || moved {
-                    self.last_input = context.now();
+                    self.last_input = context.now;
                     self.blink_phase = 0;
                     self.keep_caret_visible(context, edited);
-                    context.request_redraw();
+                    context.window.request_redraw();
                 }
                 if handled {
                     return EventFlow::Consumed;

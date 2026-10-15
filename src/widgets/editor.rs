@@ -65,12 +65,14 @@ impl EditorWidget {
     ) {
         self.session = Some(Session {
             target,
-            text: TextArea::new(&description, context.now()),
+            text: TextArea::new(&description, context.now),
             error: None,
         });
         self.layout = None;
-        context.set_ime_allowed(true);
-        context.request_redraw();
+        if let Some(window) = context.window.raw() {
+            window.set_ime_allowed(true);
+        }
+        context.window.request_redraw();
     }
 
     pub fn open_day(
@@ -100,9 +102,11 @@ impl EditorWidget {
         self.save_button.cancel();
         self.cancel_button.cancel();
         self.delete_button.cancel();
-        context.set_ime_allowed(false);
+        if let Some(window) = context.window.raw() {
+            window.set_ime_allowed(false);
+        }
         context.set_cursor(CursorIcon::Default);
-        context.request_redraw();
+        context.window.request_redraw();
     }
 
     fn save(&mut self, context: &mut AppContext<'_>) {
@@ -122,7 +126,7 @@ impl EditorWidget {
                 if let Some(session) = &mut self.session {
                     session.error = Some(error.to_string());
                 }
-                context.request_redraw();
+                context.window.request_redraw();
             }
         }
     }
@@ -138,8 +142,8 @@ impl Widget<AppContext<'_>, AppEvent> for EditorWidget {
             if let Some(point) = context.input.pointer() {
                 self.cursor = point;
             }
-            let viewport = context.viewport().as_vec2();
-            let scale = context.scale_factor();
+            let viewport = context.viewport.as_vec2();
+            let scale = context.scale;
             let panel_width = (viewport.x - 48.0 * scale)
                 .min(760.0 * scale)
                 .max(420.0 * scale);
@@ -310,7 +314,7 @@ impl Widget<AppContext<'_>, AppEvent> for EditorWidget {
                 self.cancel_button.cancel();
                 self.delete_button.cancel();
                 context.set_cursor(CursorIcon::Default);
-                context.request_redraw();
+                context.window.request_redraw();
             }
             Event::Input(InputEvent::CursorMoved { position, .. }) => {
                 self.cursor = position.as_vec2();
@@ -321,7 +325,7 @@ impl Widget<AppContext<'_>, AppEvent> for EditorWidget {
                     | self.cancel_button.pointer_moved(u64::MAX, self.cursor, true)
                     | self.delete_button.pointer_moved(u64::MAX, self.cursor, true);
                 if buttons_changed {
-                    context.request_redraw();
+                    context.window.request_redraw();
                 }
                 let delete_hovered = self.layout.is_some_and(|layout| {
                     layout.delete.is_some() && self.delete_button.contains(self.cursor)
@@ -358,7 +362,7 @@ impl Widget<AppContext<'_>, AppEvent> for EditorWidget {
                     || (layout.delete.is_some()
                         && self.delete_button.press(u64::MAX, self.cursor))
                 {
-                    context.request_redraw();
+                    context.window.request_redraw();
                 } else if let Some(session) = &mut self.session {
                     let _ = session.text.handle_event(context, event);
                 }
@@ -390,7 +394,7 @@ impl Widget<AppContext<'_>, AppEvent> for EditorWidget {
                                 if let Some(session) = &mut self.session {
                                     session.error = Some(error.to_string());
                                 }
-                                context.request_redraw();
+                                context.window.request_redraw();
                             }
                         }
                     }
@@ -398,7 +402,7 @@ impl Widget<AppContext<'_>, AppEvent> for EditorWidget {
                     || cancel != ButtonRelease::Ignored
                     || delete != ButtonRelease::Ignored
                 {
-                    context.request_redraw();
+                    context.window.request_redraw();
                 }
             }
             _ => {

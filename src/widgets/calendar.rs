@@ -169,7 +169,7 @@ impl CalendarWidget {
         {
             self.navigation = None;
             self.pointer = PointerState::Idle;
-            context.request_redraw();
+            context.window.request_redraw();
             return;
         }
         self.navigation = None;
@@ -177,12 +177,12 @@ impl CalendarWidget {
             self.pointer = PointerState::Pressed {
                 pointer,
                 target,
-                started: context.now(),
+                started: context.now,
                 origin: point,
                 current: point,
                 kind,
             };
-            context.request_redraw();
+            context.window.request_redraw();
         }
     }
 
@@ -209,7 +209,7 @@ impl CalendarWidget {
                 ..
             } if active == pointer => {
                 let dragging = kind == GestureKind::Mouse
-                    && point.distance(origin) > CLICK_SLOP * context.scale_factor();
+                    && point.distance(origin) > CLICK_SLOP * context.scale;
                 if dragging {
                     match target {
                         PressTarget::Day(origin) => PointerState::Creating {
@@ -299,7 +299,7 @@ impl CalendarWidget {
             };
             context.set_cursor(cursor);
         }
-        context.request_redraw();
+        context.window.request_redraw();
     }
 
     fn pointer_up(&mut self, context: &mut AppContext<'_>, pointer: u64, point: Vec2) {
@@ -312,27 +312,27 @@ impl CalendarWidget {
             if pointer == MOUSE_POINTER {
                 context.set_cursor(CursorIcon::Default);
             }
-            context.request_redraw();
+            context.window.request_redraw();
             return;
         }
         if today_button == ButtonRelease::Activated {
             let today = Local::now().date_naive();
             self.navigation = Some(Navigation {
                 target_week: week_start(today),
-                last_tick: context.now(),
+                last_tick: context.now,
             });
             self.pointer = PointerState::Idle;
             if pointer == MOUSE_POINTER {
                 context.set_cursor(CursorIcon::Default);
             }
-            context.request_redraw();
+            context.window.request_redraw();
             return;
         }
         if settings != ButtonRelease::Ignored || today_button != ButtonRelease::Ignored {
             if pointer == MOUSE_POINTER {
                 context.set_cursor(CursorIcon::Default);
             }
-            context.request_redraw();
+            context.window.request_redraw();
             return;
         }
         let state = std::mem::replace(&mut self.pointer, PointerState::Idle);
@@ -343,7 +343,7 @@ impl CalendarWidget {
                 origin,
                 ..
             } if active == pointer => {
-                if point.distance(origin) <= CLICK_SLOP * context.scale_factor() {
+                if point.distance(origin) <= CLICK_SLOP * context.scale {
                     match target {
                         PressTarget::Day(date) => {
                             if let Some(description) = self
@@ -411,7 +411,7 @@ impl CalendarWidget {
         if pointer == MOUSE_POINTER {
             context.set_cursor(CursorIcon::Default);
         }
-        context.request_redraw();
+        context.window.request_redraw();
     }
 
     fn move_scroll(&mut self, delta: f32, row_height: f32) {
@@ -473,7 +473,7 @@ impl Widget<AppContext<'_>, AppEvent> for CalendarWidget {
             }
             let _ = self.editor.handle_event(context, event);
             let _ = self.settings.handle_event(context, event);
-            context.request_redraw();
+            context.window.request_redraw();
             return EventFlow::NotConsumed;
         }
 
@@ -481,8 +481,8 @@ impl Widget<AppContext<'_>, AppEvent> for CalendarWidget {
             if let Some(point) = context.input.pointer() {
                 self.cursor = point;
             }
-            let viewport = context.viewport().as_vec2();
-            let scale = context.scale_factor();
+            let viewport = context.viewport.as_vec2();
+            let scale = context.scale;
             let header_height = 64.0 * scale;
             let weekday_height = 36.0 * scale;
             let calendar_top = header_height + weekday_height;
@@ -508,7 +508,7 @@ impl Widget<AppContext<'_>, AppEvent> for CalendarWidget {
 
             if let Some(navigation) = &self.navigation {
                 let target_week = navigation.target_week;
-                let elapsed = context.now().duration_since(navigation.last_tick);
+                let elapsed = context.now.duration_since(navigation.last_tick);
                 let weeks = target_week
                     .signed_duration_since(self.first_week)
                     .num_days() as f32
@@ -522,9 +522,9 @@ impl Widget<AppContext<'_>, AppEvent> for CalendarWidget {
                     let proportion = (1.0 - (-7.5 * elapsed.as_secs_f32()).exp()).min(0.28);
                     self.move_scroll(error * proportion, row_height);
                     if let Some(navigation) = &mut self.navigation {
-                        navigation.last_tick = context.now();
+                        navigation.last_tick = context.now;
                     }
-                    context.request_redraw();
+                    context.window.request_redraw();
                 }
             }
             let rows = (((viewport.y - calendar_top + self.scroll).max(0.0) / row_height)
@@ -900,9 +900,9 @@ impl Widget<AppContext<'_>, AppEvent> for CalendarWidget {
                         self.last_error = Some(error);
                     }
                 }
-                context.request_redraw();
+                context.window.request_redraw();
             }
-            Event::Host(HostEvent::Resized { .. }) => context.request_redraw(),
+            Event::Host(HostEvent::Resized { .. }) => context.window.request_redraw(),
             Event::Host(HostEvent::AboutToWait) => {
                 if let PointerState::Pressed {
                     pointer,
@@ -914,7 +914,7 @@ impl Widget<AppContext<'_>, AppEvent> for CalendarWidget {
                 } = self.pointer
                 {
                     let deadline = started + LONG_PRESS;
-                    if context.now() >= deadline {
+                    if context.now >= deadline {
                         match target {
                             PressTarget::Day(origin) => {
                                 let current = self.date_at(current).unwrap_or(origin);
@@ -923,7 +923,7 @@ impl Widget<AppContext<'_>, AppEvent> for CalendarWidget {
                                     origin,
                                     current,
                                 };
-                                context.request_redraw();
+                                context.window.request_redraw();
                             }
                             PressTarget::Endpoint {
                                 id,
@@ -938,7 +938,7 @@ impl Widget<AppContext<'_>, AppEvent> for CalendarWidget {
                                     fixed,
                                     current,
                                 };
-                                context.request_redraw();
+                                context.window.request_redraw();
                             }
                             PressTarget::Event(_) => {}
                         }
@@ -947,8 +947,8 @@ impl Widget<AppContext<'_>, AppEvent> for CalendarWidget {
                     }
                 }
                 if self.navigation.is_some() {
-                    context.wake_at(context.now() + Duration::from_millis(16));
-                    context.request_redraw();
+                    context.wake_at(context.now + Duration::from_millis(16));
+                    context.window.request_redraw();
                 }
             }
             Event::Input(InputEvent::CursorMoved { position, .. }) => {
@@ -987,17 +987,17 @@ impl Widget<AppContext<'_>, AppEvent> for CalendarWidget {
                         self.pointer = PointerState::Idle;
                         self.today_button.cancel();
                         self.settings_button.cancel();
-                        context.request_redraw();
+                        context.window.request_redraw();
                     }
                 }
             }
             Event::Input(InputEvent::MouseWheel { delta, .. }) => {
-                let scale = context.scale_factor();
+                let scale = context.scale;
                 let amount = match delta {
                     ScrollDelta::Lines { delta } => delta.y * 64.0 * scale,
                     ScrollDelta::Pixels { delta } => delta.y as f32,
                 };
-                let row_height = (context.viewport().x as f32 / 7.0 * 1.02)
+                let row_height = (context.viewport.x as f32 / 7.0 * 1.02)
                     .clamp(184.0 * scale, 228.0 * scale);
                 self.navigation = None;
                 self.move_scroll(-amount, row_height);
@@ -1005,7 +1005,7 @@ impl Widget<AppContext<'_>, AppEvent> for CalendarWidget {
                 self.today_button.cancel();
                 self.settings_button.cancel();
                 context.set_cursor(CursorIcon::Default);
-                context.request_redraw();
+                context.window.request_redraw();
             }
             Event::Input(InputEvent::Keyboard(key))
                 if key.state == ElementState::Pressed
@@ -1016,14 +1016,14 @@ impl Widget<AppContext<'_>, AppEvent> for CalendarWidget {
                 self.today_button.cancel();
                 self.settings_button.cancel();
                 context.set_cursor(CursorIcon::Default);
-                context.request_redraw();
+                context.window.request_redraw();
             }
             Event::Host(HostEvent::Focused { focused: false }) => {
                 self.pointer = PointerState::Idle;
                 self.today_button.cancel();
                 self.settings_button.cancel();
                 context.set_cursor(CursorIcon::Default);
-                context.request_redraw();
+                context.window.request_redraw();
             }
             _ => {}
         }

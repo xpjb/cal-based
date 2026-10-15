@@ -140,7 +140,7 @@ impl SettingsWidget {
         (self.hue, self.saturation, self.value) = rgb_to_hsv(color);
         self.draft = Some(settings);
         self.error = None;
-        context.request_redraw();
+        context.window.request_redraw();
     }
 
     fn close(&mut self, context: &mut AppContext<'_>) {
@@ -165,7 +165,7 @@ impl SettingsWidget {
             }
             Err(error) => self.error = Some(error.to_string()),
         }
-        context.request_redraw();
+        context.window.request_redraw();
     }
 
     fn update_picker(&mut self, target: PickerTarget, point: Vec2) {
@@ -237,7 +237,7 @@ impl SettingsWidget {
             context.set_cursor(cursor);
         }
         if changed {
-            context.request_redraw();
+            context.window.request_redraw();
         }
     }
 
@@ -254,15 +254,15 @@ impl SettingsWidget {
             || self.reset_button.press(pointer, point)
             || self.rows.iter_mut().any(|row| row.press(pointer, point))
         {
-            context.request_redraw();
+            context.window.request_redraw();
         } else if layout.saturation_value.contains(point) {
             self.picker = Some((pointer, PickerTarget::SaturationValue));
             self.update_picker(PickerTarget::SaturationValue, point);
-            context.request_redraw();
+            context.window.request_redraw();
         } else if layout.hue.contains(point) {
             self.picker = Some((pointer, PickerTarget::Hue));
             self.update_picker(PickerTarget::Hue, point);
-            context.request_redraw();
+            context.window.request_redraw();
         }
     }
 
@@ -294,7 +294,7 @@ impl SettingsWidget {
                 (self.hue, self.saturation, self.value) = rgb_to_hsv(color);
             }
         }
-        context.request_redraw();
+        context.window.request_redraw();
     }
 }
 
@@ -308,8 +308,8 @@ impl Widget<AppContext<'_>, AppEvent> for SettingsWidget {
             if let Some(point) = context.input.pointer() {
                 self.cursor = point;
             }
-            let viewport = context.viewport().as_vec2();
-            let scale = context.scale_factor();
+            let viewport = context.viewport.as_vec2();
+            let scale = context.scale;
             let panel_width = (viewport.x - 32.0 * scale).min(860.0 * scale);
             let panel_height = (viewport.y - 32.0 * scale).min(640.0 * scale);
             let panel = Rect::new(
@@ -596,7 +596,7 @@ impl Widget<AppContext<'_>, AppEvent> for SettingsWidget {
                         }
                         self.reset_button.cancel();
                         self.done_button.cancel();
-                        context.request_redraw();
+                        context.window.request_redraw();
                     }
                 }
             }
@@ -614,7 +614,7 @@ impl Widget<AppContext<'_>, AppEvent> for SettingsWidget {
                 self.reset_button.cancel();
                 self.done_button.cancel();
                 context.set_cursor(CursorIcon::Default);
-                context.request_redraw();
+                context.window.request_redraw();
             }
             _ => {}
         }

@@ -35,69 +35,48 @@ use directories::ProjectDirs;
 
 pub(crate) type AppEvent = Event<StateEvent>;
 
-pub struct AppContext<'a> {
+pub(crate) struct AppContext<'a> {
     window: &'a Window,
-    gpu: &'a Wgpu,
-    pub input: &'a Input,
-    pub state: &'a mut dyn StateClient<
+    input: &'a Input,
+    state: &'a mut dyn StateClient<
         Key = CalendarKey,
         Operation = CalendarTxn,
         Error = StateError,
     >,
-    pub(crate) text: &'a mut Sanscale,
-    frame: Option<&'a mut FrameCanvas>,
+    text: &'a mut Sanscale,
+    viewport: UVec2,
+    scale: f32,
     now: Instant,
+    frame: Option<&'a mut FrameCanvas>,
     next_wake: &'a mut Option<Instant>,
 }
 
 impl AppContext<'_> {
-    pub fn viewport(&self) -> UVec2 {
-        self.gpu.size()
-    }
-
-    pub fn scale_factor(&self) -> f32 {
-        (self.window.scale_factor() as f32).clamp(1.0, 3.0)
-    }
-
-    pub fn request_redraw(&self) {
-        self.window.request_redraw();
-    }
-
-    pub fn wake_at(&mut self, instant: Instant) {
+    fn wake_at(&mut self, instant: Instant) {
         if self.next_wake.is_none_or(|current| instant < current) {
             *self.next_wake = Some(instant);
         }
     }
 
-    pub fn now(&self) -> Instant {
-        self.now
-    }
-
-    pub fn set_ime_allowed(&self, allowed: bool) {
-        if let Some(window) = self.window.raw() {
-            window.set_ime_allowed(allowed);
-        }
-    }
-
-    pub fn set_cursor(&self, cursor: CursorIcon) {
+    fn set_cursor(&self, cursor: CursorIcon) {
         if let Some(window) = self.window.raw() {
             window.set_cursor(cursor);
         }
     }
 
-    pub fn quad(&mut self, rect: Rect, color: Vec4) {
+    fn quad(&mut self, rect: Rect, color: Vec4) {
         if let Some(frame) = self.frame.as_deref_mut() {
             frame.quad(rect, color);
         }
     }
 
-    pub fn rounded_rect(&mut self, rect: Rect, radius: f32, color: Vec4) {
+    fn rounded_rect(&mut self, rect: Rect, radius: f32, color: Vec4) {
         if let Some(frame) = self.frame.as_deref_mut() {
             frame.rounded_rect(rect, radius, color);
         }
     }
 
-    pub fn surface(
+    fn surface(
         &mut self,
         rect: Rect,
         radius: f32,
@@ -110,13 +89,13 @@ impl AppContext<'_> {
         }
     }
 
-    pub fn gradient(&mut self, rect: Rect, colors: [Vec4; 4]) {
+    fn gradient(&mut self, rect: Rect, colors: [Vec4; 4]) {
         if let Some(frame) = self.frame.as_deref_mut() {
             frame.gradient(rect, colors);
         }
     }
 
-    pub fn text(
+    fn text(
         &mut self,
         content: &str,
         rect: Rect,
@@ -140,7 +119,7 @@ impl AppContext<'_> {
         })
     }
 
-    pub fn draw_text(
+    fn draw_text(
         &mut self,
         handle: text::ShapedHandle,
         origin: Vec2,
@@ -154,8 +133,8 @@ impl AppContext<'_> {
     }
 }
 
-struct Ready {
-    app: CalendarWidget,
+struct Runtime {
+    calendar: CalendarWidget,
     state: CalendarState,
     input: Input,
     text: Sanscale,
@@ -163,8 +142,8 @@ struct Ready {
     gpu: Wgpu,
 }
 
-impl Ready {
-    fn handle(
+impl Runtime {
+    fn dispatch(
         &mut self,
         window: &Window,
         frame: Option<&mut FrameCanvas>,
@@ -174,100 +153,62 @@ impl Ready {
         let mut next_wake = None;
         let mut context = AppContext {
             window,
-            gpu: &self.gpu,
             input: &self.input,
             state: &mut self.state,
             text: &mut self.text,
-            frame,
+            viewport: self.gpu.size(),
+            scale: (window.scale_factor() as f32).clamp(1.0, 3.0),
             now: Instant::now(),
+            frame,
             next_wake: &mut next_wake,
         };
-        let flow = self.app.handle_event(&mut context, event);
+        let flow = self.calendar.handle_event(&mut context, event);
         (flow, next_wake)
     }
-
-    fn redraw(
-        &mut self,
-        window: &Window,
-        event: &AppEvent,
-    ) -> Option<(EventFlow, Option<Instant>)> {
-        let mut frame = self.gpu.begin_frame()?;
-        frame.clear(wgpu::Color {
-            r: BACKGROUND.x as f64,
-            g: BACKGROUND.y as f64,
-            b: BACKGROUND.z as f64,
-            a: 1.0,
-        });
-        self.text.set_pixel_transform(&self.gpu);
-        let mut canvas = FrameCanvas::new(self.gpu.size());
-        let result = self.handle(window, Some(&mut canvas), event);
-        self.renderer
-            .flush(&self.gpu, &mut self.text, &mut frame, canvas);
-        self.gpu.present(frame);
-        Some(result)
-    }
 }
 
-struct Host {
+struct App {
     window: Window,
-    ready: Option<Ready>,
+    runtime: Option<Runtime>,
     data_path: PathBuf,
     events: UserEventSender<StateEvent>,
-    reveal_after_first_present: bool,
 }
 
-impl Host {
-    fn new(data_path: PathBuf, events: UserEventSender<StateEvent>) -> Self {
-        Self {
-            window: Window::new(WindowConfig {
-                title: "Cal · based".into(),
-                size: UVec2::new(1180, 820),
-                visible: false,
-                ..Default::default()
-            }),
-            ready: None,
-            data_path,
-            events,
-            reveal_after_first_present: true,
-        }
-    }
-}
-
-impl Widget<WinitContext<'_>, AppEvent> for Host {
-    fn handle_event(&mut self, host: &mut WinitContext<'_>, event: &AppEvent) -> EventFlow {
+impl Widget<WinitContext<'_>, AppEvent> for App {
+    fn handle_event(&mut self, winit: &mut WinitContext<'_>, event: &AppEvent) -> EventFlow {
         let destroying = matches!(
             event,
             Event::Host(HostEvent::TargetDestroyed | HostEvent::WindowDestroyed)
         );
         if destroying {
             let mut flow = EventFlow::NotConsumed;
-            if let Some(ready) = &mut self.ready {
-                let result = ready.handle(&self.window, None, event);
+            if let Some(runtime) = &mut self.runtime {
+                let result = runtime.dispatch(&self.window, None, event);
                 flow = result.0;
-                let _ = ready.text.handle_event(&mut ready.gpu, event);
-                let _ = ready.gpu.handle_event(&mut self.window, event);
+                let _ = runtime.text.handle_event(&mut runtime.gpu, event);
+                let _ = runtime.gpu.handle_event(&mut self.window, event);
             }
-            let _ = self.window.handle_event(host, event);
+            let _ = self.window.handle_event(winit, event);
             return flow;
         }
 
-        let _ = self.window.handle_event(host, event);
+        let _ = self.window.handle_event(winit, event);
         if matches!(event, Event::Host(HostEvent::TargetCreated)) {
             if !self.window.target_available() {
                 return EventFlow::NotConsumed;
             }
-            if self.ready.is_none() {
+            if self.runtime.is_none() {
                 let gpu = match pollster::block_on(Wgpu::new(&self.window, WgpuConfig::default())) {
                     Ok(gpu) => gpu,
                     Err(error) => {
-                        host.fail(error);
+                        winit.fail(error);
                         return EventFlow::NotConsumed;
                     }
                 };
                 let text = match Sanscale::from_static(&gpu, include_bytes!("../../assets/Roboto.ttf")) {
                     Ok(text) => text,
                     Err(error) => {
-                        host.fail(error);
+                        winit.fail(error);
                         return EventFlow::NotConsumed;
                     }
                 };
@@ -277,13 +218,13 @@ impl Widget<WinitContext<'_>, AppEvent> for Host {
                 ) {
                     Ok(state) => state,
                     Err(error) => {
-                        host.fail(error.to_string());
+                        winit.fail(error.to_string());
                         return EventFlow::NotConsumed;
                     }
                 };
                 let renderer = Renderer::new(&gpu);
-                self.ready = Some(Ready {
-                    app: CalendarWidget::new(),
+                self.runtime = Some(Runtime {
+                    calendar: CalendarWidget::new(),
                     state,
                     input: Input::default(),
                     text,
@@ -299,44 +240,49 @@ impl Widget<WinitContext<'_>, AppEvent> for Host {
             }
         }
 
-        let Some(ready) = &mut self.ready else {
+        let Some(runtime) = &mut self.runtime else {
             return EventFlow::NotConsumed;
         };
-        let _ = ready.gpu.handle_event(&mut self.window, event);
-        let _ = ready.text.handle_event(&mut ready.gpu, event);
+        let _ = runtime.gpu.handle_event(&mut self.window, event);
+        let _ = runtime.text.handle_event(&mut runtime.gpu, event);
 
-        let result = if matches!(event, Event::Host(HostEvent::RedrawRequested)) {
-            ready.redraw(&self.window, event)
+        let redraw = matches!(event, Event::Host(HostEvent::RedrawRequested));
+        let (flow, next_wake) = if redraw {
+            let Some(mut frame) = runtime.gpu.begin_frame() else {
+                return EventFlow::NotConsumed;
+            };
+            frame.clear(wgpu::Color {
+                r: BACKGROUND.x as f64,
+                g: BACKGROUND.y as f64,
+                b: BACKGROUND.z as f64,
+                a: 1.0,
+            });
+            runtime.text.set_pixel_transform(&runtime.gpu);
+            let mut canvas = FrameCanvas::new(runtime.gpu.size());
+            let result = runtime.dispatch(&self.window, Some(&mut canvas), event);
+            runtime
+                .renderer
+                .flush(&runtime.gpu, &mut runtime.text, &mut frame, canvas);
+            runtime.gpu.present(frame);
+            result
         } else {
-            Some(ready.handle(&self.window, None, event))
+            runtime.dispatch(&self.window, None, event)
         };
-        let Some((flow, next_wake)) = result else {
-            return EventFlow::NotConsumed;
-        };
-
-        if matches!(event, Event::Host(HostEvent::TargetCreated)) {
-            let redraw = Event::Host(HostEvent::RedrawRequested);
-            let _ = ready.gpu.handle_event(&mut self.window, &redraw);
-            let _ = ready.text.handle_event(&mut ready.gpu, &redraw);
-            let _ = ready.redraw(&self.window, &redraw);
-            if self.reveal_after_first_present {
-                self.window.set_visible(true);
-                self.reveal_after_first_present = false;
-            }
-            self.window.request_redraw();
+        if redraw {
+            self.window.set_visible(true);
         }
 
-        if let Some(error) = ready.gpu.take_error() {
-            host.fail(error);
+        if let Some(error) = runtime.gpu.take_error() {
+            winit.fail(error);
         } else if matches!(event, Event::Host(HostEvent::CloseRequested))
             && flow == EventFlow::NotConsumed
         {
-            host.exit();
+            winit.exit();
         } else if matches!(event, Event::Host(HostEvent::AboutToWait)) {
             let control = next_wake.map_or(based::LoopControl::Wait, |instant| {
                 based::LoopControl::WaitUntil { instant }
             });
-            winit::apply_loop_control(host.event_loop, control);
+            winit::apply_loop_control(winit.event_loop, control);
         }
         flow
     }
@@ -348,5 +294,15 @@ pub fn run() -> Result<(), String> {
             .map(|directories| directories.data_local_dir().join("calendar.json"))
     });
     let data_path = data_path.ok_or_else(|| "Windows local data directory is unavailable".to_owned())?;
-    winit::run(|events| Host::new(data_path, events))
+    winit::run(|events| App {
+        window: Window::new(WindowConfig {
+            title: "Cal · based".into(),
+            size: UVec2::new(1180, 820),
+            visible: false,
+            ..Default::default()
+        }),
+        runtime: None,
+        data_path,
+        events,
+    })
 }
