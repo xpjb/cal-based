@@ -1028,6 +1028,17 @@ impl Widget<AppContext<'_>, Event> for CalendarWidget {
                 Rect::new(0.0, calendar_top - grid_width, viewport.x, grid_width),
                 GRID,
             );
+            for column in 1..7 {
+                context.quad(
+                    Rect::new(
+                        column as f32 * cell_width - grid_width,
+                        header_height,
+                        grid_width,
+                        weekday_height,
+                    ),
+                    GRID,
+                );
+            }
             for (column, weekday) in ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"]
                 .into_iter()
                 .enumerate()
