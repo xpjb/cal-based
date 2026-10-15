@@ -110,6 +110,7 @@ struct Navigation {
 pub struct CalendarWidget {
     days: BTreeMap<NaiveDate, DayWidget>,
     events: BTreeMap<EventId, CalendarEventWidget>,
+    requested_events: BTreeSet<EventId>,
     calendar_settings: CalendarSettings,
     settings_requested: bool,
     last_error: Option<StateError>,
@@ -131,6 +132,7 @@ impl CalendarWidget {
         Self {
             days: BTreeMap::new(),
             events: BTreeMap::new(),
+            requested_events: BTreeSet::new(),
             calendar_settings: CalendarSettings::default(),
             settings_requested: false,
             last_error: None,
@@ -223,7 +225,7 @@ impl CalendarWidget {
                             let endpoint_date = self
                                 .events
                                 .get(&id)
-                                .and_then(CalendarEventWidget::event)
+                                .map(CalendarEventWidget::event)
                                 .map(|event| match endpoint {
                                     Endpoint::Start => event.start_date,
                                     Endpoint::End => event.end_date,
@@ -358,7 +360,7 @@ impl CalendarWidget {
                             if let Some(event) = self
                                 .events
                                 .get(&id)
-                                .and_then(CalendarEventWidget::event)
+                                .map(CalendarEventWidget::event)
                                 .cloned()
                             {
                                 self.editor.open_event(context, event);
@@ -440,21 +442,32 @@ impl CalendarWidget {
 impl Widget<AppContext<'_>, AppEvent> for CalendarWidget {
     fn handle_event(&mut self, context: &mut AppContext<'_>, event: &AppEvent) -> EventFlow {
         if let Event::User(StateEvent::Value { key, result, .. }) = event {
-            if let CalendarKey::Event(id) = key {
-                self.events
-                    .entry(*id)
-                    .or_insert_with(|| CalendarEventWidget::new(*id));
-            }
             for day in self.days.values_mut() {
                 let _ = day.handle_event(context, event);
             }
-            for event_widget in self.events.values_mut() {
-                let _ = event_widget.handle_event(context, event);
-            }
             match (key, result) {
+                (CalendarKey::Event(id), Ok(CalendarValue::Event(Some(calendar_event)))) => {
+                    self.requested_events.remove(id);
+                    if calendar_event.id != *id {
+                        self.last_error = Some(StateError::Decode(
+                            "state returned an event with the wrong ID".into(),
+                        ));
+                    } else if let Some(event_widget) = self.events.get_mut(id) {
+                        let _ = event_widget.handle_event(context, event);
+                    } else {
+                        self.events
+                            .insert(*id, CalendarEventWidget::new(calendar_event.clone()));
+                    }
+                }
+                (CalendarKey::Event(id), Ok(CalendarValue::Event(None))) => {
+                    self.requested_events.remove(id);
+                    self.events.remove(id);
+                }
+                (CalendarKey::Event(_), Err(error)) => {
+                    self.last_error = Some(error.clone());
+                }
                 (_, Err(error)) => self.last_error = Some(error.clone()),
-                (CalendarKey::Day(_), Ok(CalendarValue::Day(_)))
-                | (CalendarKey::Event(_), Ok(CalendarValue::Event(_))) => {}
+                (CalendarKey::Day(_), Ok(CalendarValue::Day(_))) => {}
                 (CalendarKey::Settings, Ok(CalendarValue::Settings(settings))) => {
                     self.calendar_settings = settings.clone();
                 }
@@ -596,24 +609,23 @@ impl Widget<AppContext<'_>, AppEvent> for CalendarWidget {
                 .flat_map(DayWidget::event_ids)
                 .collect();
             self.events.retain(|id, event_widget| {
+                let event = event_widget.event();
                 active_event_ids.contains(id)
-                    || event_widget.event().is_some_and(|event| {
-                        event.start_date <= interest_end && event.end_date >= interest_start
-                    })
+                    || (event.start_date <= interest_end && event.end_date >= interest_start)
             });
+            self.requested_events
+                .retain(|id| active_event_ids.contains(id));
             for id in active_event_ids {
-                if !self.events.contains_key(&id) {
-                    self.events.insert(id, CalendarEventWidget::new(id));
-                    if let Err(error) = context.state.request(CalendarKey::Event(id)) {
-                        self.events.remove(&id);
-                        self.last_error = Some(error);
-                    }
+                if !self.events.contains_key(&id) && self.requested_events.insert(id)
+                    && let Err(error) = context.state.request(CalendarKey::Event(id))
+                {
+                    self.last_error = Some(error);
                 }
             }
             let mut visual_events: Vec<EventVisual> = self
                 .events
                 .values()
-                .filter_map(CalendarEventWidget::visual)
+                .map(CalendarEventWidget::visual)
                 .filter(|event| {
                     event.start_date <= interest_end && event.end_date >= interest_start
                 })

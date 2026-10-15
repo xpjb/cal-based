@@ -246,27 +246,26 @@ impl EventStrip {
 }
 
 pub struct CalendarEventWidget {
-    id: EventId,
-    event: Option<CalendarEvent>,
+    event: CalendarEvent,
 }
 
 impl CalendarEventWidget {
-    pub fn new(id: EventId) -> Self {
-        Self { id, event: None }
+    pub fn new(event: CalendarEvent) -> Self {
+        Self { event }
     }
 
-    pub fn event(&self) -> Option<&CalendarEvent> {
-        self.event.as_ref()
+    pub fn event(&self) -> &CalendarEvent {
+        &self.event
     }
 
-    pub fn visual(&self) -> Option<EventVisual> {
-        self.event.as_ref().map(|event| EventVisual {
-            id: event.id,
-            start_date: event.start_date,
-            end_date: event.end_date,
-            description: event.description.clone(),
+    pub fn visual(&self) -> EventVisual {
+        EventVisual {
+            id: self.event.id,
+            start_date: self.event.start_date,
+            end_date: self.event.end_date,
+            description: self.event.description.clone(),
             draft: false,
-        })
+        }
     }
 }
 
@@ -274,10 +273,10 @@ impl Widget<AppContext<'_>, AppEvent> for CalendarEventWidget {
     fn handle_event(&mut self, _context: &mut AppContext<'_>, event: &AppEvent) -> EventFlow {
         if let Event::User(StateEvent::Value {
             key: CalendarKey::Event(id),
-            result: Ok(CalendarValue::Event(event)),
+            result: Ok(CalendarValue::Event(Some(event))),
             ..
         }) = event
-            && *id == self.id
+            && *id == self.event.id
         {
             self.event.clone_from(event);
         }
