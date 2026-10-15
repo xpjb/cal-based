@@ -2,8 +2,8 @@ use crate::*;
 use based::{
     ElementState, Event, EventFlow, HostEvent, InputEvent, Key, MouseButton, NamedKey, TouchPhase,
     Widget,
-    backend::winit::raw::window::CursorIcon,
     glam::{Vec2, Vec4},
+    widget::window::CursorIcon,
 };
 
 const MOUSE_POINTER: u64 = u64::MAX;

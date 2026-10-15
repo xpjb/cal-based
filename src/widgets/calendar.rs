@@ -5,11 +5,11 @@ use std::{
 };
 
 use based::{
-    ElementState, Event, EventFlow, HostEvent, InputEvent, Key, MouseButton,
-    NamedKey, ScrollDelta, TouchPhase, Widget,
-    backend::winit::raw::window::CursorIcon,
+    ElementState, Event, EventFlow, HostEvent, InputEvent, Key, MouseButton, NamedKey, ScrollDelta,
+    TouchPhase, Widget,
     glam::{Vec2, Vec4},
     web_time::Instant,
+    widget::window::CursorIcon,
 };
 use chrono::{Datelike, Days, Local, NaiveDate};
 use uuid::Uuid;

@@ -5,10 +5,12 @@ use std::time::Duration;
 use based::{
     ElementState, Event, EventFlow, HostEvent, InputEvent, Key, ModifiersState, MouseButton,
     NamedKey, ScrollDelta, Widget,
-    backend::winit::raw::window::CursorIcon,
     glam::{Vec2, Vec4},
     web_time::Instant,
-    widget::sanscale::raw::{self as text, Caret, Motion},
+    widget::{
+        sanscale::raw::{self as text, Caret, Motion},
+        window::CursorIcon,
+    },
 };
 
 const BASE_FONT_SIZE: f32 = 18.0;

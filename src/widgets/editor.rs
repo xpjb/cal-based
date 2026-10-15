@@ -3,8 +3,8 @@ use crate::*;
 
 use based::{
     ElementState, Event, EventFlow, HostEvent, InputEvent, Key, MouseButton, NamedKey, Widget,
-    backend::winit::raw::window::CursorIcon,
     glam::{Vec2, Vec4},
+    widget::window::CursorIcon,
 };
 use chrono::NaiveDate;
 
@@ -69,9 +69,7 @@ impl EditorWidget {
             error: None,
         });
         self.layout = None;
-        if let Some(window) = context.window.raw() {
-            window.set_ime_allowed(true);
-        }
+        context.window.set_ime_allowed(true);
         context.window.request_redraw();
     }
 
@@ -102,9 +100,7 @@ impl EditorWidget {
         self.save_button.cancel();
         self.cancel_button.cancel();
         self.delete_button.cancel();
-        if let Some(window) = context.window.raw() {
-            window.set_ime_allowed(false);
-        }
+        context.window.set_ime_allowed(false);
         context.set_cursor(CursorIcon::Default);
         context.window.request_redraw();
     }
