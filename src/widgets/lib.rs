@@ -1,6 +1,7 @@
 mod calendar;
 mod day;
 mod editor;
+mod event;
 mod paint;
 mod settings;
 mod text_area;
@@ -10,6 +11,7 @@ mod ui;
 pub(crate) use calendar::*;
 pub(crate) use day::*;
 pub(crate) use editor::*;
+pub(crate) use event::*;
 pub(crate) use paint::*;
 pub(crate) use settings::*;
 pub(crate) use ui::*;

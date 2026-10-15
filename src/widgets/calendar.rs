@@ -18,37 +18,12 @@ const HEADER: Vec4 = Vec4::new(0.065, 0.078, 0.097, 1.0);
 const WEEKDAY_BAR: Vec4 = Vec4::new(0.052, 0.063, 0.078, 1.0);
 const LONG_PRESS: Duration = Duration::from_millis(360);
 const CLICK_SLOP: f32 = 7.0;
-const MAX_EVENT_LANES: usize = 4;
 const MOUSE_POINTER: u64 = u64::MAX;
-const HANDLE_SURFACE: SurfaceStyle = SurfaceStyle {
-    fill: StateColors::new(
-        Vec4::new(1.0, 1.0, 1.0, 0.30),
-        Vec4::new(1.0, 1.0, 1.0, 0.76),
-        Vec4::new(1.0, 1.0, 1.0, 0.92),
-        Vec4::ONE,
-    ),
-    border: StateColors::new(Vec4::ZERO, Vec4::ZERO, Vec4::ZERO, Vec4::ZERO),
-};
-const EVENT_COLORS: [Vec4; 7] = [
-    Vec4::new(0.16, 0.34, 0.53, 1.0),
-    Vec4::new(0.12, 0.39, 0.34, 1.0),
-    Vec4::new(0.34, 0.24, 0.50, 1.0),
-    Vec4::new(0.47, 0.29, 0.13, 1.0),
-    Vec4::new(0.47, 0.21, 0.29, 1.0),
-    Vec4::new(0.23, 0.39, 0.20, 1.0),
-    Vec4::new(0.18, 0.35, 0.43, 1.0),
-];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum GestureKind {
     Mouse,
     Touch,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Endpoint {
-    Start,
-    End,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -92,13 +67,6 @@ struct DayHit {
     date: NaiveDate,
 }
 
-#[derive(Clone, Copy)]
-struct EventHit {
-    rect: Rect,
-    id: EventId,
-    endpoint: Option<(Endpoint, NaiveDate)>,
-}
-
 #[derive(Default)]
 struct HitMap {
     days: Vec<DayHit>,
@@ -134,31 +102,6 @@ impl HitMap {
     }
 }
 
-struct WeekVisual {
-    start: NaiveDate,
-    rect: Rect,
-}
-
-struct EventVisual {
-    id: EventId,
-    start_date: NaiveDate,
-    end_date: NaiveDate,
-    description: String,
-    draft: bool,
-}
-
-struct EventStrip {
-    rect: Rect,
-    id: EventId,
-    description: String,
-    color: Vec4,
-    draft: bool,
-    start_handle: Option<Rect>,
-    end_handle: Option<Rect>,
-    fixed_for_start: NaiveDate,
-    fixed_for_end: NaiveDate,
-}
-
 struct Navigation {
     target_week: NaiveDate,
     last_tick: Instant,
@@ -166,7 +109,7 @@ struct Navigation {
 
 pub struct CalendarWidget {
     days: BTreeMap<NaiveDate, DayWidget>,
-    events: BTreeMap<EventId, Option<CalendarEvent>>,
+    events: BTreeMap<EventId, CalendarEventWidget>,
     calendar_settings: CalendarSettings,
     settings_requested: bool,
     last_error: Option<StateError>,
@@ -280,7 +223,7 @@ impl CalendarWidget {
                             let endpoint_date = self
                                 .events
                                 .get(&id)
-                                .and_then(|event| event.as_ref())
+                                .and_then(CalendarEventWidget::event)
                                 .map(|event| match endpoint {
                                     Endpoint::Start => event.start_date,
                                     Endpoint::End => event.end_date,
@@ -415,7 +358,7 @@ impl CalendarWidget {
                             if let Some(event) = self
                                 .events
                                 .get(&id)
-                                .and_then(|event| event.as_ref())
+                                .and_then(CalendarEventWidget::event)
                                 .cloned()
                             {
                                 self.editor.open_event(context, event);
@@ -497,20 +440,21 @@ impl CalendarWidget {
 impl Widget<AppContext<'_>, AppEvent> for CalendarWidget {
     fn handle_event(&mut self, context: &mut AppContext<'_>, event: &AppEvent) -> EventFlow {
         if let Event::User(StateEvent::Value { key, result, .. }) = event {
+            if let CalendarKey::Event(id) = key {
+                self.events
+                    .entry(*id)
+                    .or_insert_with(|| CalendarEventWidget::new(*id));
+            }
             for day in self.days.values_mut() {
                 let _ = day.handle_event(context, event);
             }
+            for event_widget in self.events.values_mut() {
+                let _ = event_widget.handle_event(context, event);
+            }
             match (key, result) {
                 (_, Err(error)) => self.last_error = Some(error.clone()),
-                (CalendarKey::Day(_), Ok(CalendarValue::Day(_))) => {}
-                (CalendarKey::Event(id), Ok(CalendarValue::Event(event))) => match event {
-                    Some(event) => {
-                        self.events.insert(*id, Some(event.clone()));
-                    }
-                    None => {
-                        self.events.remove(id);
-                    }
-                },
+                (CalendarKey::Day(_), Ok(CalendarValue::Day(_)))
+                | (CalendarKey::Event(_), Ok(CalendarValue::Event(_))) => {}
                 (CalendarKey::Settings, Ok(CalendarValue::Settings(settings))) => {
                     self.calendar_settings = settings.clone();
                 }
@@ -651,15 +595,15 @@ impl Widget<AppContext<'_>, AppEvent> for CalendarWidget {
                 .values()
                 .flat_map(DayWidget::event_ids)
                 .collect();
-            self.events.retain(|id, event| {
+            self.events.retain(|id, event_widget| {
                 active_event_ids.contains(id)
-                    || event.as_ref().is_some_and(|event| {
+                    || event_widget.event().is_some_and(|event| {
                         event.start_date <= interest_end && event.end_date >= interest_start
                     })
             });
             for id in active_event_ids {
                 if !self.events.contains_key(&id) {
-                    self.events.insert(id, None);
+                    self.events.insert(id, CalendarEventWidget::new(id));
                     if let Err(error) = context.state.request(CalendarKey::Event(id)) {
                         self.events.remove(&id);
                         self.last_error = Some(error);
@@ -669,26 +613,13 @@ impl Widget<AppContext<'_>, AppEvent> for CalendarWidget {
             let mut visual_events: Vec<EventVisual> = self
                 .events
                 .values()
-                .filter_map(|event| event.as_ref())
+                .filter_map(CalendarEventWidget::visual)
                 .filter(|event| {
                     event.start_date <= interest_end && event.end_date >= interest_start
                 })
-                .map(|event| EventVisual {
-                    id: event.id,
-                    start_date: event.start_date,
-                    end_date: event.end_date,
-                    description: event.description.clone(),
-                    draft: false,
-                })
                 .collect();
             if let PointerState::Creating { origin, current, .. } = self.pointer {
-                visual_events.push(EventVisual {
-                    id: Uuid::from_u128(u128::MAX),
-                    start_date: origin.min(current),
-                    end_date: origin.max(current),
-                    description: String::new(),
-                    draft: true,
-                });
+                visual_events.push(EventVisual::draft(origin.min(current), origin.max(current)));
             }
             if let PointerState::Resizing {
                 id,
@@ -711,103 +642,17 @@ impl Widget<AppContext<'_>, AppEvent> for CalendarWidget {
             }
             let lane_events: Vec<_> = visual_events
                 .iter()
-                .map(|event| CalendarEvent {
-                    id: event.id,
-                    start_date: event.start_date,
-                    end_date: event.end_date,
-                    description: event.description.clone(),
-                })
+                .map(EventVisual::calendar_event)
                 .collect();
             let lanes = assign_event_lanes(&lane_events);
-            let strip_height = 24.0 * scale;
-            let strip_pitch = 28.0 * scale;
             let mut strips = Vec::new();
             for event in &visual_events {
                 let lane = lanes.get(&event.id).copied().unwrap_or(0);
-                if lane >= MAX_EVENT_LANES {
-                    continue;
-                }
-                for week in &weeks {
-                    let Some(week_end) = week.start.checked_add_days(Days::new(6)) else {
-                        continue;
-                    };
-                    if event.end_date < week.start || event.start_date > week_end {
-                        continue;
-                    }
-                    let segment_start = event.start_date.max(week.start);
-                    let segment_end = event.end_date.min(week_end);
-                    let start_column = segment_start
-                        .signed_duration_since(week.start)
-                        .num_days() as f32;
-                    let end_column = segment_end
-                        .signed_duration_since(week.start)
-                        .num_days() as f32;
-                    let starts_here = event.start_date >= week.start;
-                    let ends_here = event.end_date <= week_end;
-                    let left_pad = if starts_here { 5.0 * scale } else { 0.0 };
-                    let right_pad = if ends_here { 5.0 * scale } else { 0.0 };
-                    let rect = Rect::new(
-                        start_column * cell_width + left_pad,
-                        week.rect.bottom()
-                            - 8.0 * scale
-                            - strip_height
-                            - lane as f32 * strip_pitch,
-                        ((end_column - start_column + 1.0) * cell_width - left_pad - right_pad)
-                            .max(2.0),
-                        strip_height,
-                    );
-                    let start_handle = starts_here.then_some(Rect::new(
-                        rect.position.x,
-                        rect.position.y - 4.0 * scale,
-                        14.0 * scale,
-                        rect.size.y + 8.0 * scale,
-                    ));
-                    let end_handle = ends_here.then_some(Rect::new(
-                        rect.right() - 14.0 * scale,
-                        rect.position.y - 4.0 * scale,
-                        14.0 * scale,
-                        rect.size.y + 8.0 * scale,
-                    ));
-                    strips.push(EventStrip {
-                        rect,
-                        id: event.id,
-                        description: event.description.clone(),
-                        color: if event.draft {
-                            ACCENT
-                        } else {
-                            EVENT_COLORS[(event.id.as_u128() as usize) % EVENT_COLORS.len()]
-                        },
-                        draft: event.draft,
-                        start_handle,
-                        end_handle,
-                        fixed_for_start: event.end_date,
-                        fixed_for_end: event.start_date,
-                    });
-                }
+                event.append_strips(&mut strips, &weeks, cell_width, scale, lane);
             }
 
             for strip in &strips {
-                if !strip.draft {
-                    self.hits.events.push(EventHit {
-                        rect: strip.rect,
-                        id: strip.id,
-                        endpoint: None,
-                    });
-                    if let Some(rect) = strip.start_handle {
-                        self.hits.events.push(EventHit {
-                            rect,
-                            id: strip.id,
-                            endpoint: Some((Endpoint::Start, strip.fixed_for_start)),
-                        });
-                    }
-                    if let Some(rect) = strip.end_handle {
-                        self.hits.events.push(EventHit {
-                            rect,
-                            id: strip.id,
-                            endpoint: Some((Endpoint::End, strip.fixed_for_end)),
-                        });
-                    }
-                }
+                strip.append_hits(&mut self.hits.events);
             }
 
             let modal_open = self.editor.is_open() || self.settings.is_open();
@@ -902,7 +747,7 @@ impl Widget<AppContext<'_>, AppEvent> for CalendarWidget {
             }
 
             for strip in &strips {
-                let pointer_state = match &self.pointer {
+                let state = match &self.pointer {
                     PointerState::Resizing { id, .. } if *id == strip.id => {
                         SurfaceState::Dragging
                     }
@@ -919,42 +764,8 @@ impl Widget<AppContext<'_>, AppEvent> for CalendarWidget {
                     ) => SurfaceState::Hovered,
                     _ => SurfaceState::Idle,
                 };
-                let state = if strip.draft {
-                    SurfaceState::Dragging
-                } else {
-                    pointer_state
-                };
-                let light = Vec4::new(1.0, 1.0, 1.0, strip.color.w);
-                let dark = Vec4::new(0.0, 0.0, 0.0, strip.color.w);
-                paint_surface(
-                    context,
-                    strip.rect,
-                    7.0 * scale,
-                    1.5 * scale,
-                    state,
-                    SurfaceStyle {
-                        fill: StateColors::new(
-                            strip.color,
-                            strip.color.lerp(light, 0.14),
-                            strip.color.lerp(dark, 0.12),
-                            strip.color.lerp(light, 0.08),
-                        ),
-                        border: StateColors::new(
-                            Vec4::ZERO,
-                            Vec4::new(0.82, 0.91, 1.0, 0.78),
-                            Vec4::new(0.91, 0.96, 1.0, 0.96),
-                            Vec4::ONE,
-                        ),
-                    },
-                );
-                for (endpoint, handle) in [
-                    (Endpoint::Start, strip.start_handle),
-                    (Endpoint::End, strip.end_handle),
-                ] {
-                    let Some(handle) = handle else {
-                        continue;
-                    };
-                    let handle_state = match &self.pointer {
+                let handle_states = [Endpoint::Start, Endpoint::End].map(|endpoint| {
+                    match &self.pointer {
                         PointerState::Resizing {
                             id,
                             endpoint: active,
@@ -979,30 +790,12 @@ impl Widget<AppContext<'_>, AppEvent> for CalendarWidget {
                             )
                         }) => SurfaceState::Hovered,
                         _ => SurfaceState::Idle,
-                    };
-                    paint_surface(
-                        context,
-                        handle.inset(4.0 * scale),
-                        3.0 * scale,
-                        0.0,
-                        handle_state,
-                        HANDLE_SURFACE,
-                    );
-                }
+                    }
+                });
+                strip.paint_surface(context, state, handle_states, scale);
             }
             for strip in &strips {
-                if !strip.description.is_empty() {
-                    let description = strip.description.lines().next().unwrap_or("");
-                    let _ = context.text(
-                        description,
-                        strip.rect.inset(4.0 * scale),
-                        13.5 * scale,
-                        Vec4::ONE,
-                        HorizontalAlign::Center,
-                        VerticalAlign::Center,
-                        false,
-                    );
-                }
+                strip.paint_text(context, scale);
             }
 
             context.quad(Rect::new(0.0, header_height, viewport.x, weekday_height), WEEKDAY_BAR);
