@@ -1,11 +1,10 @@
 # Acceptance
 
-Accepted on October 14, 2026.
+Accepted on October 15, 2026.
 
-## Automated checks
+## Relevant checks
 
-- Six platform-neutral model tests pass through Nextest.
-- The library passes the native compiler check.
+- The model was not changed, so the model test suite was not rerun for this UI-only pass.
 - The application passes `cargo xwin check` for `x86_64-pc-windows-msvc`.
 - The optimized Windows build produces a valid x64 PE executable.
 
@@ -18,16 +17,18 @@ Verified:
 - launch, first frame, resizing, and continuous week rendering;
 - Sunday-first columns and day descriptions;
 - larger calendar and editor type at 100% scale and simulated 200% Windows display scale;
-- rounded event strips, endpoint handles, Today button, editor panel, and editor controls;
+- shader-antialiased rounded event strips, endpoint handles, Today button, editor panel, and editor controls;
+- visible idle, hover, pressed, and dragging states for calendar and editor interactions;
+- pointer cursor changes for links, text, day dragging, active dragging, and endpoint resizing;
 - deterministic bottom-up event lanes and four-lane rendering;
 - day editor rendering, keyboard replacement, save, and JSON persistence;
 - event editor rendering, keyboard replacement, save, and JSON persistence;
-- long-press day drag with a live event preview;
+- mouse day dragging enters the drag state after normal pointer slop with no hold delay;
+- mouse endpoint resizing enters the drag state after normal pointer slop with no hold delay;
+- touch retains long-press promotion at the gesture layer;
 - release creates the inclusive event range without opening the editor;
-- long-press endpoint drag updates the live range preview;
-- crossing the fixed endpoint deletes the event on release;
-- Today navigation produces distinct in-flight frames, settles on the current week, and stops on manual wheel input;
-- scaled long-press event creation still persists the selected inclusive date range;
+- endpoint dragging updates the live range preview and crossing the fixed endpoint deletes the event;
+- Today navigation produces distinct in-flight frames, aligns the current week at the top, and stops on manual wheel input;
 - the final persisted file remains readable after each operation.
 
 The Wine host emitted software-display EGL warnings because the headless X server had no accelerated DRI device. Rendering and interaction still completed correctly.
