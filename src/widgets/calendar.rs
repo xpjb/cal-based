@@ -1,3 +1,4 @@
+use crate::*;
 use std::time::Duration;
 
 use based::{
@@ -7,20 +8,8 @@ use based::{
     glam::{Vec2, Vec4},
     web_time::Instant,
 };
-use cal_based::model::{CalendarEvent, CalendarTxn, EventId, assign_event_lanes};
 use chrono::{Datelike, Days, Local, NaiveDate};
 use uuid::Uuid;
-
-use super::{
-    AppContext,
-    editor::EditorWidget,
-    paint::{HorizontalAlign, Rect, VerticalAlign},
-    settings::SettingsWidget,
-    ui::{
-        ACCENT, BACKGROUND, Button, ButtonRelease, GRID, MUTED, NEUTRAL_BUTTON, PRIMARY_BUTTON,
-        StateColors, SurfaceState, SurfaceStyle, TEXT, paint_surface,
-    },
-};
 
 const HEADER: Vec4 = Vec4::new(0.065, 0.078, 0.097, 1.0);
 const WEEKDAY_BAR: Vec4 = Vec4::new(0.052, 0.063, 0.078, 1.0);

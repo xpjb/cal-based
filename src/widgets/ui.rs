@@ -1,9 +1,5 @@
+use crate::*;
 use based::glam::Vec4;
-
-use super::{
-    AppContext,
-    paint::{HorizontalAlign, Rect, VerticalAlign},
-};
 
 pub const BACKGROUND: Vec4 = Vec4::new(0.035, 0.043, 0.055, 1.0);
 pub const GRID: Vec4 = Vec4::new(0.15, 0.175, 0.21, 1.0);

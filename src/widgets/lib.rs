@@ -4,6 +4,13 @@ mod paint;
 mod settings;
 mod ui;
 
+pub(crate) use calendar::*;
+pub(crate) use editor::*;
+pub(crate) use paint::*;
+pub(crate) use settings::*;
+pub(crate) use ui::*;
+
+use crate::*;
 use std::{env, path::PathBuf};
 
 use based::{
@@ -18,14 +25,7 @@ use based::{
         window::{Window, WindowConfig},
     },
 };
-use cal_based::model::AppModel;
 use directories::ProjectDirs;
-
-use self::{
-    calendar::CalendarWidget,
-    paint::{FrameCanvas, HorizontalAlign, Rect, Renderer, VerticalAlign},
-    ui::BACKGROUND,
-};
 
 pub struct AppContext<'a> {
     window: &'a Window,
@@ -253,7 +253,7 @@ impl Widget<WinitContext<'_>, Event> for Host {
                         return EventFlow::NotConsumed;
                     }
                 };
-                let text = match Sanscale::from_static(&gpu, include_bytes!("../assets/Roboto.ttf")) {
+                let text = match Sanscale::from_static(&gpu, include_bytes!("../../assets/Roboto.ttf")) {
                     Ok(text) => text,
                     Err(error) => {
                         host.fail(error);

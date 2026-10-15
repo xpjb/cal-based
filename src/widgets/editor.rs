@@ -1,3 +1,4 @@
+use crate::*;
 use std::{ops::Range, time::Duration};
 
 use based::{
@@ -7,18 +8,8 @@ use based::{
     glam::{Vec2, Vec4},
     widget::sanscale::raw::{self as text, Caret, Motion, WordBoundaries},
 };
-use cal_based::model::{CalendarEvent, CalendarTxn, EventId};
 use chrono::NaiveDate;
 use ropey::Rope;
-
-use super::{
-    AppContext,
-    paint::{HorizontalAlign, Rect, VerticalAlign},
-    ui::{
-        ACCENT, Button, ButtonRelease, DANGER_BUTTON, GRID, NEUTRAL_BUTTON, PRIMARY_BUTTON,
-        StateColors, SurfaceState, SurfaceStyle, TEXT, paint_surface,
-    },
-};
 
 const BASE_FONT_SIZE: f32 = 18.0;
 const CARET_PERIOD: Duration = Duration::from_millis(530);
