@@ -1,4 +1,5 @@
 mod calendar;
+mod day;
 mod editor;
 mod paint;
 mod settings;
@@ -7,6 +8,7 @@ mod text_edit;
 mod ui;
 
 pub(crate) use calendar::*;
+pub(crate) use day::*;
 pub(crate) use editor::*;
 pub(crate) use paint::*;
 pub(crate) use settings::*;
@@ -152,7 +154,7 @@ impl AppContext<'_> {
 
 struct Ready {
     app: CalendarWidget,
-    state: LocalCalendarState,
+    state: CalendarState,
     input: Input,
     text: Sanscale,
     renderer: Renderer,
@@ -267,7 +269,7 @@ impl Widget<WinitContext<'_>, AppEvent> for Host {
                         return EventFlow::NotConsumed;
                     }
                 };
-                let state = match LocalCalendarState::open(
+                let state = match CalendarState::open(
                     &self.data_path,
                     self.events.clone(),
                 ) {

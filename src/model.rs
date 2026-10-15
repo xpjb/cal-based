@@ -111,62 +111,8 @@ impl CalendarData {
         self.days.get(&date)
     }
 
-    pub fn day_description(&self, date: NaiveDate) -> &str {
-        self.days
-            .get(&date)
-            .map_or("", |day| day.description.as_str())
-    }
-
     pub fn event(&self, id: EventId) -> Option<&CalendarEvent> {
         self.events.get(&id)
-    }
-
-    pub fn events(&self) -> impl Iterator<Item = &CalendarEvent> {
-        self.events.values()
-    }
-
-    pub fn settings(&self) -> &CalendarSettings {
-        &self.settings
-    }
-
-    pub fn apply_value(
-        &mut self,
-        key: CalendarKey,
-        value: CalendarValue,
-    ) -> Result<(), StateError> {
-        match (key, value) {
-            (CalendarKey::Snapshot, CalendarValue::Snapshot(calendar)) => *self = calendar,
-            (CalendarKey::Day(date), CalendarValue::Day(day)) => match day {
-                Some(day) => {
-                    self.days.insert(date, day);
-                }
-                None => {
-                    self.days.remove(&date);
-                }
-            },
-            (CalendarKey::Event(id), CalendarValue::Event(event)) => {
-                self.replace_event_snapshot(id, event);
-            }
-            (CalendarKey::Settings, CalendarValue::Settings(settings)) => {
-                self.settings = settings;
-            }
-            _ => {
-                return Err(StateError::Decode(
-                    "state returned a value for the wrong key".into(),
-                ));
-            }
-        }
-        Ok(())
-    }
-
-    pub fn events_between(
-        &self,
-        first: NaiveDate,
-        last: NaiveDate,
-    ) -> impl Iterator<Item = &CalendarEvent> {
-        self.events
-            .values()
-            .filter(move |event| event.start_date <= last && event.end_date >= first)
     }
 
     pub fn apply_transactions(
@@ -254,16 +200,6 @@ impl CalendarData {
         Ok(())
     }
 
-    pub fn replace_event_snapshot(&mut self, id: EventId, event: Option<CalendarEvent>) {
-        if let Some(old) = self.events.remove(&id) {
-            self.remove_memberships(&old);
-        }
-        if let Some(event) = event {
-            self.add_memberships(&event);
-            self.events.insert(id, event);
-        }
-    }
-
     fn add_memberships(&mut self, event: &CalendarEvent) {
         let mut date = event.start_date;
         loop {
@@ -296,7 +232,6 @@ impl CalendarData {
             date = next;
         }
     }
-
 }
 
 fn validate_text(text: &str) -> Result<(), StateError> {
@@ -351,7 +286,6 @@ pub enum CalendarTxn {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum CalendarKey {
-    Snapshot,
     Day(NaiveDate),
     Event(EventId),
     Settings,
@@ -359,7 +293,6 @@ pub enum CalendarKey {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CalendarValue {
-    Snapshot(CalendarData),
     Day(Option<DayRecord>),
     Event(Option<CalendarEvent>),
     Settings(CalendarSettings),
@@ -396,14 +329,14 @@ pub enum StateEvent {
     },
 }
 
-pub struct LocalCalendarState {
+pub struct CalendarState {
     data: CalendarData,
-    path: Option<PathBuf>,
+    path: PathBuf,
     next_request_id: RequestId,
     events: UserEventSender<StateEvent>,
 }
 
-impl LocalCalendarState {
+impl CalendarState {
     pub fn open(
         path: impl Into<PathBuf>,
         events: UserEventSender<StateEvent>,
@@ -434,19 +367,10 @@ impl LocalCalendarState {
         }
         Ok(Self {
             data,
-            path: Some(path),
+            path,
             next_request_id: 1,
             events,
         })
-    }
-
-    pub fn memory(data: CalendarData, events: UserEventSender<StateEvent>) -> Self {
-        Self {
-            data,
-            path: None,
-            next_request_id: 1,
-            events,
-        }
     }
 
     fn next_request(&mut self) -> Result<RequestId, StateError> {
@@ -460,7 +384,6 @@ impl LocalCalendarState {
 
     fn send_value(&self, request_id: RequestId, key: CalendarKey) {
         let value = match key {
-            CalendarKey::Snapshot => CalendarValue::Snapshot(self.data.clone()),
             CalendarKey::Day(date) => CalendarValue::Day(self.data.days.get(&date).cloned()),
             CalendarKey::Event(id) => CalendarValue::Event(self.data.events.get(&id).cloned()),
             CalendarKey::Settings => CalendarValue::Settings(self.data.settings.clone()),
@@ -473,7 +396,7 @@ impl LocalCalendarState {
     }
 }
 
-impl StateClient for LocalCalendarState {
+impl StateClient for CalendarState {
     type Key = CalendarKey;
     type Operation = CalendarTxn;
     type Error = StateError;
@@ -503,15 +426,13 @@ impl StateClient for LocalCalendarState {
             .collect();
         let mut next = self.data.clone();
         next.apply_transactions(&operations)?;
-        if let Some(path) = &self.path {
-            if let Some(parent) = path.parent() {
-                fs::create_dir_all(parent)
-                    .map_err(|error| StateError::Write(error.to_string()))?;
-            }
-            let bytes = serde_json::to_vec_pretty(&next)
+        if let Some(parent) = self.path.parent() {
+            fs::create_dir_all(parent)
                 .map_err(|error| StateError::Write(error.to_string()))?;
-            fs::write(path, bytes).map_err(|error| StateError::Write(error.to_string()))?;
         }
+        let bytes = serde_json::to_vec_pretty(&next)
+            .map_err(|error| StateError::Write(error.to_string()))?;
+        fs::write(&self.path, bytes).map_err(|error| StateError::Write(error.to_string()))?;
         self.data = next;
         for key in keys {
             self.send_value(request_id, key);
@@ -613,12 +534,12 @@ mod tests {
     }
 
     #[test]
-    fn local_state_persists_and_sends_responses() {
+    fn calendar_state_persists_and_sends_responses() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("calendar.json");
         let id = Uuid::from_u128(3);
         let (sender, events) = state_events();
-        let mut state = LocalCalendarState::open(&path, sender.clone()).unwrap();
+        let mut state = CalendarState::open(&path, sender.clone()).unwrap();
         let transaction_id = state
             .transact(vec![CalendarTxn::CreateEvent {
                 id,
@@ -634,10 +555,6 @@ mod tests {
         } = events.lock().unwrap().pop().unwrap();
         assert_eq!(request_id, transaction_id);
         assert_eq!(key, CalendarKey::Event(id));
-        let mut mirror = CalendarData::default();
-        mirror.apply_value(key, result.clone().unwrap()).unwrap();
-        assert!(mirror.day(date(9)).unwrap().events.contains(&id));
-        assert!(mirror.day(date(11)).unwrap().events.contains(&id));
         assert!(matches!(
             result,
             Ok(CalendarValue::Event(Some(CalendarEvent { description, .. })))
@@ -670,15 +587,14 @@ mod tests {
         let StateEvent::Value { result, .. } = events.lock().unwrap().pop().unwrap();
         assert_eq!(result, Ok(CalendarValue::Settings(settings.clone())));
 
-        let mut reopened = LocalCalendarState::open(path, sender).unwrap();
+        let mut reopened = CalendarState::open(path, sender).unwrap();
         events.lock().unwrap().clear();
-        reopened.request(CalendarKey::Snapshot).unwrap();
+        reopened.request(CalendarKey::Event(id)).unwrap();
         let StateEvent::Value { result, .. } = events.lock().unwrap().pop().unwrap();
-        assert!(matches!(
-            result,
-            Ok(CalendarValue::Snapshot(data))
-                if data.event(id).is_some() && data.settings() == &settings
-        ));
+        assert!(matches!(result, Ok(CalendarValue::Event(Some(_)))));
+        reopened.request(CalendarKey::Settings).unwrap();
+        let StateEvent::Value { result, .. } = events.lock().unwrap().pop().unwrap();
+        assert_eq!(result, Ok(CalendarValue::Settings(settings)));
     }
 
     #[test]
@@ -695,19 +611,24 @@ mod tests {
         )
         .unwrap();
         let (sender, events) = state_events();
-        let mut state = LocalCalendarState::open(path, sender).unwrap();
-        state.request(CalendarKey::Snapshot).unwrap();
-        let StateEvent::Value {
-            result: Ok(CalendarValue::Snapshot(data)),
-            ..
-        } = events.lock().unwrap().pop().unwrap()
-        else {
-            panic!("snapshot response");
-        };
-        assert_eq!(data.event(key).unwrap().id, key);
-        assert!(data.day(date(10)).unwrap().events.contains(&key));
-        assert!(data.day(date(11)).unwrap().events.contains(&key));
-        assert!(data.day(date(1)).is_none());
+        let mut state = CalendarState::open(path, sender).unwrap();
+        state.request(CalendarKey::Event(key)).unwrap();
+        let StateEvent::Value { result, .. } = events.lock().unwrap().pop().unwrap();
+        assert!(matches!(
+            result,
+            Ok(CalendarValue::Event(Some(CalendarEvent { id, .. }))) if id == key
+        ));
+        for day in [10, 11] {
+            state.request(CalendarKey::Day(date(day))).unwrap();
+            let StateEvent::Value { result, .. } = events.lock().unwrap().pop().unwrap();
+            assert!(matches!(
+                result,
+                Ok(CalendarValue::Day(Some(day))) if day.events.contains(&key)
+            ));
+        }
+        state.request(CalendarKey::Day(date(1))).unwrap();
+        let StateEvent::Value { result, .. } = events.lock().unwrap().pop().unwrap();
+        assert_eq!(result, Ok(CalendarValue::Day(None)));
     }
 
     #[test]

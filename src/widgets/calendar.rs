@@ -1,5 +1,8 @@
 use crate::*;
-use std::time::Duration;
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    time::Duration,
+};
 
 use based::{
     ElementState, Event, EventFlow, HostEvent, InputEvent, Key, MouseButton,
@@ -17,20 +20,6 @@ const LONG_PRESS: Duration = Duration::from_millis(360);
 const CLICK_SLOP: f32 = 7.0;
 const MAX_EVENT_LANES: usize = 4;
 const MOUSE_POINTER: u64 = u64::MAX;
-const DAY_SURFACE: SurfaceStyle = SurfaceStyle {
-    fill: StateColors::new(
-        Vec4::ZERO,
-        Vec4::new(0.40, 0.66, 0.96, 0.025),
-        Vec4::new(0.40, 0.66, 0.96, 0.07),
-        Vec4::new(0.40, 0.66, 0.96, 0.10),
-    ),
-    border: StateColors::new(
-        Vec4::ZERO,
-        Vec4::ZERO,
-        Vec4::new(0.54, 0.76, 1.0, 0.52),
-        Vec4::new(0.64, 0.82, 1.0, 0.82),
-    ),
-};
 const HANDLE_SURFACE: SurfaceStyle = SurfaceStyle {
     fill: StateColors::new(
         Vec4::new(1.0, 1.0, 1.0, 0.30),
@@ -176,9 +165,11 @@ struct Navigation {
 }
 
 pub struct CalendarWidget {
-    calendar: CalendarData,
+    days: BTreeMap<NaiveDate, DayWidget>,
+    events: BTreeMap<EventId, Option<CalendarEvent>>,
+    calendar_settings: CalendarSettings,
+    settings_requested: bool,
     last_error: Option<StateError>,
-    snapshot_requested: bool,
     first_week: NaiveDate,
     scroll: f32,
     navigation: Option<Navigation>,
@@ -195,9 +186,11 @@ impl CalendarWidget {
     pub fn new() -> Self {
         let today = Local::now().date_naive();
         Self {
-            calendar: CalendarData::default(),
+            days: BTreeMap::new(),
+            events: BTreeMap::new(),
+            calendar_settings: CalendarSettings::default(),
+            settings_requested: false,
             last_error: None,
-            snapshot_requested: false,
             first_week: week_start(today),
             scroll: 0.0,
             navigation: None,
@@ -285,8 +278,9 @@ impl CalendarWidget {
                             fixed,
                         } => {
                             let endpoint_date = self
-                                .calendar
-                                .event(id)
+                                .events
+                                .get(&id)
+                                .and_then(|event| event.as_ref())
                                 .map(|event| match endpoint {
                                     Endpoint::Start => event.start_date,
                                     Endpoint::End => event.end_date,
@@ -369,7 +363,7 @@ impl CalendarWidget {
         let today_button = self.today_button.release(pointer, point);
         if settings == ButtonRelease::Activated {
             self.settings
-                .open(context, self.calendar.settings().clone());
+                .open(context, self.calendar_settings.clone());
             self.pointer = PointerState::Idle;
             if pointer == MOUSE_POINTER {
                 context.set_cursor(CursorIcon::Default);
@@ -408,11 +402,22 @@ impl CalendarWidget {
                 if point.distance(origin) <= CLICK_SLOP * context.scale_factor() {
                     match target {
                         PressTarget::Day(date) => {
-                            let description = self.calendar.day_description(date).to_owned();
-                            self.editor.open_day(context, date, description);
+                            if let Some(description) = self
+                                .days
+                                .get(&date)
+                                .and_then(DayWidget::description)
+                                .map(str::to_owned)
+                            {
+                                self.editor.open_day(context, date, description);
+                            }
                         }
                         PressTarget::Event(id) => {
-                            if let Some(event) = self.calendar.event(id).cloned() {
+                            if let Some(event) = self
+                                .events
+                                .get(&id)
+                                .and_then(|event| event.as_ref())
+                                .cloned()
+                            {
                                 self.editor.open_event(context, event);
                             }
                         }
@@ -492,13 +497,28 @@ impl CalendarWidget {
 impl Widget<AppContext<'_>, AppEvent> for CalendarWidget {
     fn handle_event(&mut self, context: &mut AppContext<'_>, event: &AppEvent) -> EventFlow {
         if let Event::User(StateEvent::Value { key, result, .. }) = event {
-            match result {
-                Ok(value) => {
-                    if let Err(error) = self.calendar.apply_value(*key, value.clone()) {
-                        self.last_error = Some(error);
+            for day in self.days.values_mut() {
+                let _ = day.handle_event(context, event);
+            }
+            match (key, result) {
+                (_, Err(error)) => self.last_error = Some(error.clone()),
+                (CalendarKey::Day(_), Ok(CalendarValue::Day(_))) => {}
+                (CalendarKey::Event(id), Ok(CalendarValue::Event(event))) => match event {
+                    Some(event) => {
+                        self.events.insert(*id, Some(event.clone()));
                     }
+                    None => {
+                        self.events.remove(id);
+                    }
+                },
+                (CalendarKey::Settings, Ok(CalendarValue::Settings(settings))) => {
+                    self.calendar_settings = settings.clone();
                 }
-                Err(error) => self.last_error = Some(error.clone()),
+                _ => {
+                    self.last_error = Some(StateError::Decode(
+                        "state returned a value for the wrong key".into(),
+                    ));
+                }
             }
             let _ = self.editor.handle_event(context, event);
             let _ = self.settings.handle_event(context, event);
@@ -519,7 +539,7 @@ impl Widget<AppContext<'_>, AppEvent> for CalendarWidget {
             let cell_width = viewport.x / 7.0;
             let grid_width = scale.max(1.0);
             let today = Local::now().date_naive();
-            let day_colors = self.calendar.settings().day_colors;
+            let day_colors = self.calendar_settings.day_colors;
             self.today_button.set_rect(Rect::new(
                 viewport.x - 124.0 * scale,
                 11.0 * scale,
@@ -578,6 +598,26 @@ impl Widget<AppContext<'_>, AppEvent> for CalendarWidget {
                     ),
                 });
             }
+            let interest_start = weeks.first().map_or(self.first_week, |week| week.start);
+            let interest_end = weeks
+                .last()
+                .and_then(|week| week.start.checked_add_days(Days::new(6)))
+                .unwrap_or(interest_start);
+            self.days
+                .retain(|date, _| *date >= interest_start && *date <= interest_end);
+            for week in &weeks {
+                for column in 0..7 {
+                    let Some(date) = week.start.checked_add_days(Days::new(column as u64)) else {
+                        continue;
+                    };
+                    if !self.days.contains_key(&date) {
+                        self.days.insert(date, DayWidget::new(date));
+                        if let Err(error) = context.state.request(CalendarKey::Day(date)) {
+                            self.last_error = Some(error);
+                        }
+                    }
+                }
+            }
 
             context.quad(Rect::new(0.0, 0.0, viewport.x, viewport.y), BACKGROUND);
             for week in &weeks {
@@ -591,63 +631,53 @@ impl Widget<AppContext<'_>, AppEvent> for CalendarWidget {
                         cell_width,
                         row_height,
                     );
-                    let weekend = column == 0 || column == 6;
-                    let color = if date < today {
-                        if weekend {
-                            day_colors.past_weekend
-                        } else {
-                            day_colors.past_weekday
-                        }
-                    } else if date == today {
-                        if weekend {
-                            day_colors.today_weekend
-                        } else {
-                            day_colors.today_weekday
-                        }
-                    } else if weekend {
-                        day_colors.upcoming_weekend
-                    } else {
-                        day_colors.upcoming_weekday
-                    };
-                    context.quad(rect, Vec4::from_array(color.rgba()));
-                    if date == today {
-                        context.rounded_rect(
-                            Rect::new(
-                                rect.position.x + 8.0 * scale,
-                                rect.position.y + 8.0 * scale,
-                                36.0 * scale,
-                                34.0 * scale,
-                            ),
-                            8.0 * scale,
-                            ACCENT,
-                        );
-                    }
-                    let visible = Rect::new(
-                        rect.position.x,
-                        rect.position.y.max(calendar_top),
-                        rect.size.x,
-                        (rect.bottom() - rect.position.y.max(calendar_top)).max(0.0),
-                    );
-                    if visible.size.y > 0.0 {
+                    if let Some(day) = self.days.get(&date)
+                        && let Some(visible) = day.paint_background(
+                            context,
+                            rect,
+                            today,
+                            day_colors,
+                            calendar_top,
+                            scale,
+                        )
+                    {
                         self.hits.days.push(DayHit { rect: visible, date });
                     }
                 }
             }
 
-            let first_visible = weeks.first().map_or(self.first_week, |week| week.start);
-            let last_visible = weeks
-                .last()
-                .and_then(|week| week.start.checked_add_days(Days::new(6)))
-                .unwrap_or(first_visible);
+            let active_event_ids: BTreeSet<_> = self
+                .days
+                .values()
+                .flat_map(DayWidget::event_ids)
+                .collect();
+            self.events.retain(|id, event| {
+                active_event_ids.contains(id)
+                    || event.as_ref().is_some_and(|event| {
+                        event.start_date <= interest_end && event.end_date >= interest_start
+                    })
+            });
+            for id in active_event_ids {
+                if !self.events.contains_key(&id) {
+                    self.events.insert(id, None);
+                    if let Err(error) = context.state.request(CalendarKey::Event(id)) {
+                        self.events.remove(&id);
+                        self.last_error = Some(error);
+                    }
+                }
+            }
             let mut visual_events: Vec<EventVisual> = self
-                .calendar
-                .events_between(first_visible, last_visible)
-                .cloned()
+                .events
+                .values()
+                .filter_map(|event| event.as_ref())
+                .filter(|event| {
+                    event.start_date <= interest_end && event.end_date >= interest_start
+                })
                 .map(|event| EventVisual {
                     id: event.id,
                     start_date: event.start_date,
                     end_date: event.end_date,
-                    description: event.description,
+                    description: event.description.clone(),
                     draft: false,
                 })
                 .collect();
@@ -816,19 +846,8 @@ impl Widget<AppContext<'_>, AppEvent> for CalendarWidget {
                 } else {
                     SurfaceState::Idle
                 };
-                if state != SurfaceState::Idle {
-                    paint_surface(
-                        context,
-                        hit.rect,
-                        0.0,
-                        if state == SurfaceState::Hovered {
-                            0.0
-                        } else {
-                            2.0 * scale
-                        },
-                        state,
-                        DAY_SURFACE,
-                    );
+                if let Some(day) = self.days.get(&hit.date) {
+                    day.paint_interaction(context, hit.rect, state, scale);
                 }
             }
 
@@ -866,60 +885,17 @@ impl Widget<AppContext<'_>, AppEvent> for CalendarWidget {
                     let Some(date) = week.start.checked_add_days(Days::new(column as u64)) else {
                         continue;
                     };
-                    let cell = Rect::new(
-                        column as f32 * cell_width,
-                        week.rect.position.y,
-                        cell_width,
-                        row_height,
-                    );
-                    let number = date.day().to_string();
-                    let is_today = date == today;
-                    let _ = context.text(
-                        &number,
-                        Rect::new(
-                            cell.position.x + 8.0 * scale,
-                            cell.position.y + 8.0 * scale,
-                            36.0 * scale,
-                            34.0 * scale,
-                        ),
-                        18.0 * scale,
-                        if is_today { BACKGROUND } else { TEXT },
-                        HorizontalAlign::Center,
-                        VerticalAlign::Center,
-                        false,
-                    );
-                    if date.day() == 1 || column == 0 {
-                        let month = date.format("%b").to_string().to_uppercase();
-                        let _ = context.text(
-                            &month,
+                    if let Some(day) = self.days.get(&date) {
+                        day.paint_text(
+                            context,
                             Rect::new(
-                                cell.position.x + 50.0 * scale,
-                                cell.position.y + 10.0 * scale,
-                                cell_width - 58.0 * scale,
-                                28.0 * scale,
+                                column as f32 * cell_width,
+                                week.rect.position.y,
+                                cell_width,
+                                row_height,
                             ),
-                            12.5 * scale,
-                            MUTED,
-                            HorizontalAlign::Left,
-                            VerticalAlign::Center,
-                            false,
-                        );
-                    }
-                    let description = self.calendar.day_description(date).to_owned();
-                    if !description.is_empty() {
-                        let _ = context.text(
-                            &description,
-                            Rect::new(
-                                cell.position.x + 9.0 * scale,
-                                cell.position.y + 48.0 * scale,
-                                cell_width - 18.0 * scale,
-                                (row_height - 158.0 * scale).max(22.0 * scale),
-                            ),
-                            14.0 * scale,
-                            Vec4::new(0.73, 0.77, 0.82, 1.0),
-                            HorizontalAlign::Left,
-                            VerticalAlign::Top,
-                            true,
+                            today,
+                            scale,
                         );
                     }
                 }
@@ -1120,9 +1096,9 @@ impl Widget<AppContext<'_>, AppEvent> for CalendarWidget {
 
         match event {
             Event::Host(HostEvent::TargetCreated) => {
-                if !self.snapshot_requested {
-                    self.snapshot_requested = true;
-                    if let Err(error) = context.state.request(CalendarKey::Snapshot) {
+                if !self.settings_requested {
+                    self.settings_requested = true;
+                    if let Err(error) = context.state.request(CalendarKey::Settings) {
                         self.last_error = Some(error);
                     }
                 }
