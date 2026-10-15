@@ -106,11 +106,11 @@ impl FrameCanvas {
     }
 
     pub fn quad(&mut self, rect: Rect, color: Vec4) {
-        self.push_rect(rect, 0.0, 0.0, color, Vec4::ZERO);
+        self.push_rect(rect, 0.0, 0.0, [color; 4], Vec4::ZERO);
     }
 
     pub fn rounded_rect(&mut self, rect: Rect, radius: f32, color: Vec4) {
-        self.push_rect(rect, radius, 0.0, color, Vec4::ZERO);
+        self.push_rect(rect, radius, 0.0, [color; 4], Vec4::ZERO);
     }
 
     pub fn surface(
@@ -121,7 +121,11 @@ impl FrameCanvas {
         fill: Vec4,
         border: Vec4,
     ) {
-        self.push_rect(rect, radius, border_width, fill, border);
+        self.push_rect(rect, radius, border_width, [fill; 4], border);
+    }
+
+    pub fn gradient(&mut self, rect: Rect, colors: [Vec4; 4]) {
+        self.push_rect(rect, 0.0, 0.0, colors, Vec4::ZERO);
     }
 
     fn push_rect(
@@ -129,12 +133,12 @@ impl FrameCanvas {
         rect: Rect,
         radius: f32,
         border_width: f32,
-        fill: Vec4,
+        fill: [Vec4; 4],
         border: Vec4,
     ) {
         if rect.size.x <= 0.0
             || rect.size.y <= 0.0
-            || (fill.w <= 0.0 && border.w <= 0.0)
+            || (fill.iter().all(|color| color.w <= 0.0) && border.w <= 0.0)
         {
             return;
         }
@@ -162,22 +166,31 @@ impl FrameCanvas {
         };
         let first = self.vertices.len() as u32;
         let corners = [
-            (min, -extent),
-            (Vec2::new(max.x, min.y), Vec2::new(extent.x, -extent.y)),
-            (max, extent),
-            (min, -extent),
-            (max, extent),
-            (Vec2::new(min.x, max.y), Vec2::new(-extent.x, extent.y)),
+            (min, -extent, fill[0]),
+            (
+                Vec2::new(max.x, min.y),
+                Vec2::new(extent.x, -extent.y),
+                fill[1],
+            ),
+            (max, extent, fill[2]),
+            (min, -extent, fill[0]),
+            (max, extent, fill[2]),
+            (
+                Vec2::new(min.x, max.y),
+                Vec2::new(-extent.x, extent.y),
+                fill[3],
+            ),
         ];
-        self.vertices.extend(corners.into_iter().map(|(position, local)| Vertex {
-            position: clip(position).to_array(),
-            local: local.to_array(),
-            half_size: half_size.to_array(),
-            radius,
-            border_width,
-            fill: fill.to_array(),
-            border: border.to_array(),
-        }));
+        self.vertices
+            .extend(corners.into_iter().map(|(position, local, fill)| Vertex {
+                position: clip(position).to_array(),
+                local: local.to_array(),
+                half_size: half_size.to_array(),
+                radius,
+                border_width,
+                fill: fill.to_array(),
+                border: border.to_array(),
+            }));
         if let Some(PaintCommand::Surfaces {
             first: previous,
             vertices,

@@ -15,8 +15,8 @@ use super::{
     AppContext,
     paint::{HorizontalAlign, Rect, VerticalAlign},
     ui::{
-        ACCENT, Button, ButtonRelease, DANGER_BUTTON, GRID, MUTED, NEUTRAL_BUTTON,
-        PRIMARY_BUTTON, StateColors, SurfaceState, SurfaceStyle, TEXT, paint_surface,
+        ACCENT, Button, ButtonRelease, DANGER_BUTTON, GRID, NEUTRAL_BUTTON, PRIMARY_BUTTON,
+        StateColors, SurfaceState, SurfaceStyle, TEXT, paint_surface,
     },
 };
 
@@ -138,6 +138,7 @@ impl Session {
 
 #[derive(Clone, Copy)]
 struct EditorLayout {
+    panel: Rect,
     text: Rect,
     save: Rect,
     cancel: Rect,
@@ -401,6 +402,7 @@ impl Widget<AppContext<'_>, Event> for EditorWidget {
                 40.0 * scale,
             ));
             let layout = EditorLayout {
+                panel,
                 text: text_rect,
                 save,
                 cancel,
@@ -428,7 +430,7 @@ impl Widget<AppContext<'_>, Event> for EditorWidget {
             context.rounded_rect(panel.inset(scale), 11.0 * scale, EDITOR_BG);
             let (title, subtitle) = match self.session.as_ref().expect("checked above").target {
                 EditorTarget::Day(date) => (
-                    "DAY DESCRIPTION".to_owned(),
+                    "Day description".to_owned(),
                     date.format("%A, %B %-d, %Y").to_string(),
                 ),
                 EditorTarget::Event {
@@ -436,7 +438,7 @@ impl Widget<AppContext<'_>, Event> for EditorWidget {
                     end_date,
                     ..
                 } => (
-                    "EVENT DESCRIPTION".to_owned(),
+                    "Event description".to_owned(),
                     if start_date == end_date {
                         start_date.format("%A, %B %-d, %Y").to_string()
                     } else {
@@ -583,25 +585,15 @@ impl Widget<AppContext<'_>, Event> for EditorWidget {
                     VerticalAlign::Center,
                     false,
                 );
-            } else {
-                let _ = context.text(
-                    "Ctrl+Enter saves · Esc cancels",
-                    footer,
-                    12.5 * scale,
-                    MUTED,
-                    HorizontalAlign::Left,
-                    VerticalAlign::Center,
-                    false,
-                );
             }
 
             self.cancel_button
-                .paint(context, "CANCEL", 13.0, scale, NEUTRAL_BUTTON);
+                .paint(context, "Cancel", 13.0, scale, NEUTRAL_BUTTON);
             self.save_button
-                .paint(context, "SAVE", 13.0, scale, PRIMARY_BUTTON);
+                .paint(context, "Save", 13.0, scale, PRIMARY_BUTTON);
             if delete.is_some() {
                 self.delete_button
-                    .paint(context, "DELETE", 13.0, scale, DANGER_BUTTON);
+                    .paint(context, "Delete", 13.0, scale, DANGER_BUTTON);
             }
             return EventFlow::Consumed;
         }
@@ -664,6 +656,10 @@ impl Widget<AppContext<'_>, Event> for EditorWidget {
                 let Some(layout) = self.layout else {
                     return EventFlow::Consumed;
                 };
+                if !layout.panel.contains(self.cursor) {
+                    self.close(context);
+                    return EventFlow::Consumed;
+                }
                 if self.save_button.press(u64::MAX, self.cursor)
                     || self.cancel_button.press(u64::MAX, self.cursor)
                     || (layout.delete.is_some()

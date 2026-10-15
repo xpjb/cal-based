@@ -1,6 +1,7 @@
 mod calendar;
 mod editor;
 mod paint;
+mod settings;
 mod ui;
 
 use std::{env, path::PathBuf};
@@ -94,6 +95,12 @@ impl AppContext<'_> {
     ) {
         if let Some(frame) = self.frame.as_deref_mut() {
             frame.surface(rect, radius, border_width, fill, border);
+        }
+    }
+
+    pub fn gradient(&mut self, rect: Rect, colors: [Vec4; 4]) {
+        if let Some(frame) = self.frame.as_deref_mut() {
+            frame.gradient(rect, colors);
         }
     }
 

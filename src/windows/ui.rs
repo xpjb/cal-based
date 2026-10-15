@@ -82,16 +82,16 @@ pub struct ButtonStyle {
 pub const NEUTRAL_BUTTON: ButtonStyle = ButtonStyle {
     surface: SurfaceStyle {
         fill: StateColors::new(
-            Vec4::new(0.13, 0.15, 0.18, 1.0),
-            Vec4::new(0.18, 0.22, 0.28, 1.0),
-            Vec4::new(0.09, 0.11, 0.14, 1.0),
-            Vec4::new(0.09, 0.11, 0.14, 1.0),
+            Vec4::new(0.065, 0.08, 0.105, 1.0),
+            Vec4::new(0.10, 0.13, 0.17, 1.0),
+            Vec4::new(0.045, 0.055, 0.075, 1.0),
+            Vec4::new(0.045, 0.055, 0.075, 1.0),
         ),
         border: StateColors::new(
-            Vec4::new(0.32, 0.39, 0.49, 1.0),
-            Vec4::new(0.48, 0.62, 0.78, 1.0),
-            Vec4::new(0.37, 0.58, 0.82, 1.0),
-            Vec4::new(0.37, 0.58, 0.82, 1.0),
+            Vec4::new(0.22, 0.28, 0.36, 1.0),
+            Vec4::new(0.36, 0.48, 0.62, 1.0),
+            Vec4::new(0.28, 0.46, 0.68, 1.0),
+            Vec4::new(0.28, 0.46, 0.68, 1.0),
         ),
     },
     text: TEXT,
@@ -102,16 +102,16 @@ pub const NEUTRAL_BUTTON: ButtonStyle = ButtonStyle {
 pub const PRIMARY_BUTTON: ButtonStyle = ButtonStyle {
     surface: SurfaceStyle {
         fill: StateColors::new(
-            Vec4::new(0.25, 0.47, 0.72, 1.0),
-            Vec4::new(0.32, 0.57, 0.84, 1.0),
-            Vec4::new(0.18, 0.37, 0.61, 1.0),
-            Vec4::new(0.18, 0.37, 0.61, 1.0),
+            Vec4::new(0.09, 0.24, 0.40, 1.0),
+            Vec4::new(0.13, 0.32, 0.52, 1.0),
+            Vec4::new(0.065, 0.18, 0.31, 1.0),
+            Vec4::new(0.065, 0.18, 0.31, 1.0),
         ),
         border: StateColors::new(
-            Vec4::new(0.43, 0.63, 0.84, 1.0),
-            Vec4::new(0.66, 0.82, 0.98, 1.0),
-            Vec4::new(0.31, 0.53, 0.78, 1.0),
-            Vec4::new(0.31, 0.53, 0.78, 1.0),
+            Vec4::new(0.26, 0.46, 0.66, 1.0),
+            Vec4::new(0.45, 0.67, 0.88, 1.0),
+            Vec4::new(0.20, 0.38, 0.58, 1.0),
+            Vec4::new(0.20, 0.38, 0.58, 1.0),
         ),
     },
     text: Vec4::ONE,
@@ -122,16 +122,16 @@ pub const PRIMARY_BUTTON: ButtonStyle = ButtonStyle {
 pub const DANGER_BUTTON: ButtonStyle = ButtonStyle {
     surface: SurfaceStyle {
         fill: StateColors::new(
-            Vec4::new(0.35, 0.16, 0.20, 1.0),
-            Vec4::new(0.48, 0.20, 0.26, 1.0),
-            Vec4::new(0.27, 0.11, 0.15, 1.0),
-            Vec4::new(0.27, 0.11, 0.15, 1.0),
+            Vec4::new(0.22, 0.07, 0.10, 1.0),
+            Vec4::new(0.32, 0.10, 0.14, 1.0),
+            Vec4::new(0.16, 0.045, 0.07, 1.0),
+            Vec4::new(0.16, 0.045, 0.07, 1.0),
         ),
         border: StateColors::new(
-            Vec4::new(0.57, 0.29, 0.35, 1.0),
-            Vec4::new(0.78, 0.39, 0.47, 1.0),
-            Vec4::new(0.53, 0.24, 0.31, 1.0),
-            Vec4::new(0.53, 0.24, 0.31, 1.0),
+            Vec4::new(0.46, 0.20, 0.27, 1.0),
+            Vec4::new(0.66, 0.28, 0.36, 1.0),
+            Vec4::new(0.39, 0.16, 0.22, 1.0),
+            Vec4::new(0.39, 0.16, 0.22, 1.0),
         ),
     },
     text: Vec4::new(1.0, 0.86, 0.88, 1.0),

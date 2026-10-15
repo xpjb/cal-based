@@ -48,12 +48,68 @@ pub struct CalendarEvent {
     pub description: String,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RgbColor {
+    pub r: u8,
+    pub g: u8,
+    pub b: u8,
+}
+
+impl RgbColor {
+    pub const fn new(r: u8, g: u8, b: u8) -> Self {
+        Self { r, g, b }
+    }
+
+    pub fn rgba(self) -> [f32; 4] {
+        [self.r, self.g, self.b, 255].map(|channel| {
+            let value = channel as f32 / 255.0;
+            if value <= 0.04045 {
+                value / 12.92
+            } else {
+                ((value + 0.055) / 1.055).powf(2.4)
+            }
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DayColors {
+    pub past_weekday: RgbColor,
+    pub today_weekday: RgbColor,
+    pub upcoming_weekday: RgbColor,
+    pub past_weekend: RgbColor,
+    pub today_weekend: RgbColor,
+    pub upcoming_weekend: RgbColor,
+}
+
+impl Default for DayColors {
+    fn default() -> Self {
+        Self {
+            past_weekday: RgbColor::new(30, 35, 42),
+            today_weekday: RgbColor::new(54, 91, 124),
+            upcoming_weekday: RgbColor::new(46, 55, 66),
+            past_weekend: RgbColor::new(21, 27, 35),
+            today_weekend: RgbColor::new(45, 75, 103),
+            upcoming_weekend: RgbColor::new(34, 44, 55),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CalendarSettings {
+    pub day_colors: DayColors,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CalendarData {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     days: BTreeMap<NaiveDate, DayRecord>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     events: BTreeMap<EventId, CalendarEvent>,
+    #[serde(default)]
+    settings: CalendarSettings,
 }
 
 impl CalendarData {
@@ -73,6 +129,10 @@ impl CalendarData {
 
     pub fn events(&self) -> impl Iterator<Item = &CalendarEvent> {
         self.events.values()
+    }
+
+    pub fn settings(&self) -> &CalendarSettings {
+        &self.settings
     }
 
     pub fn events_between(
@@ -160,6 +220,9 @@ impl CalendarData {
                         .remove(id)
                         .ok_or(StateError::MissingEvent(*id))?;
                     next.remove_memberships(&event);
+                }
+                CalendarTxn::SetSettings { settings } => {
+                    next.settings.clone_from(settings);
                 }
             }
         }
@@ -257,6 +320,9 @@ pub enum CalendarTxn {
     DeleteEvent {
         id: EventId,
     },
+    SetSettings {
+        settings: CalendarSettings,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -264,6 +330,7 @@ pub enum CalendarKey {
     Snapshot,
     Day(NaiveDate),
     Event(EventId),
+    Settings,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -271,6 +338,7 @@ pub enum CalendarValue {
     Snapshot(CalendarData),
     Day(Option<DayRecord>),
     Event(Option<CalendarEvent>),
+    Settings(CalendarSettings),
 }
 
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
@@ -362,6 +430,7 @@ impl LazyState for LocalCalendarState {
             CalendarKey::Snapshot => CalendarValue::Snapshot(self.data.clone()),
             CalendarKey::Day(date) => CalendarValue::Day(self.data.days.get(&date).cloned()),
             CalendarKey::Event(id) => CalendarValue::Event(self.data.events.get(&id).cloned()),
+            CalendarKey::Settings => CalendarValue::Settings(self.data.settings.clone()),
         };
         self.responses.push_back(GenericResponse {
             request_id,
@@ -455,6 +524,7 @@ impl AppModel {
                 | CalendarTxn::SetEventStart { id, .. }
                 | CalendarTxn::SetEventEnd { id, .. }
                 | CalendarTxn::DeleteEvent { id } => CalendarKey::Event(*id),
+                CalendarTxn::SetSettings { .. } => CalendarKey::Settings,
             })
             .collect();
         for key in keys {
@@ -493,6 +563,10 @@ impl AppModel {
                 }
                 (CalendarKey::Event(id), Ok(CalendarValue::Event(event))) => {
                     self.calendar.replace_event_snapshot(id, event);
+                    changed = true;
+                }
+                (CalendarKey::Settings, Ok(CalendarValue::Settings(settings))) => {
+                    self.calendar.settings = settings;
                     changed = true;
                 }
                 (_, Ok(_)) => {
@@ -610,12 +684,27 @@ mod tests {
                 if description == "conference"
         ));
 
+        let mut settings = CalendarSettings::default();
+        settings.day_colors.past_weekday = RgbColor::new(12, 34, 56);
+        state
+            .transact(vec![CalendarTxn::SetSettings {
+                settings: settings.clone(),
+            }])
+            .unwrap();
+        state.request(CalendarKey::Settings).unwrap();
+        let response = state.poll_response().unwrap();
+        assert_eq!(
+            response.result,
+            Ok(CalendarValue::Settings(settings.clone()))
+        );
+
         let mut reopened = LocalCalendarState::open(path).unwrap();
         reopened.request(CalendarKey::Snapshot).unwrap();
         let response = reopened.poll_response().unwrap();
         assert!(matches!(
             response.result,
-            Ok(CalendarValue::Snapshot(data)) if data.event(id).is_some()
+            Ok(CalendarValue::Snapshot(data))
+                if data.event(id).is_some() && data.settings() == &settings
         ));
     }
 

@@ -15,16 +15,15 @@ use super::{
     AppContext,
     editor::EditorWidget,
     paint::{HorizontalAlign, Rect, VerticalAlign},
+    settings::SettingsWidget,
     ui::{
-        ACCENT, BACKGROUND, Button, ButtonRelease, GRID, MUTED, PRIMARY_BUTTON, StateColors,
-        SurfaceState, SurfaceStyle, TEXT, paint_surface,
+        ACCENT, BACKGROUND, Button, ButtonRelease, GRID, MUTED, NEUTRAL_BUTTON, PRIMARY_BUTTON,
+        StateColors, SurfaceState, SurfaceStyle, TEXT, paint_surface,
     },
 };
 
 const HEADER: Vec4 = Vec4::new(0.065, 0.078, 0.097, 1.0);
 const WEEKDAY_BAR: Vec4 = Vec4::new(0.052, 0.063, 0.078, 1.0);
-const CELL: Vec4 = Vec4::new(0.043, 0.052, 0.065, 1.0);
-const WEEKEND: Vec4 = Vec4::new(0.038, 0.046, 0.057, 1.0);
 const LONG_PRESS: Duration = Duration::from_millis(360);
 const CLICK_SLOP: f32 = 7.0;
 const MAX_EVENT_LANES: usize = 4;
@@ -32,15 +31,15 @@ const MOUSE_POINTER: u64 = u64::MAX;
 const DAY_SURFACE: SurfaceStyle = SurfaceStyle {
     fill: StateColors::new(
         Vec4::ZERO,
+        Vec4::new(0.40, 0.66, 0.96, 0.025),
         Vec4::new(0.40, 0.66, 0.96, 0.07),
-        Vec4::new(0.40, 0.66, 0.96, 0.14),
-        Vec4::new(0.40, 0.66, 0.96, 0.18),
+        Vec4::new(0.40, 0.66, 0.96, 0.10),
     ),
     border: StateColors::new(
         Vec4::ZERO,
-        Vec4::new(0.40, 0.66, 0.96, 0.34),
-        Vec4::new(0.54, 0.76, 1.0, 0.82),
-        Vec4::new(0.64, 0.82, 1.0, 0.96),
+        Vec4::ZERO,
+        Vec4::new(0.54, 0.76, 1.0, 0.52),
+        Vec4::new(0.64, 0.82, 1.0, 0.82),
     ),
 };
 const HANDLE_SURFACE: SurfaceStyle = SurfaceStyle {
@@ -53,13 +52,13 @@ const HANDLE_SURFACE: SurfaceStyle = SurfaceStyle {
     border: StateColors::new(Vec4::ZERO, Vec4::ZERO, Vec4::ZERO, Vec4::ZERO),
 };
 const EVENT_COLORS: [Vec4; 7] = [
-    Vec4::new(0.29, 0.49, 0.72, 1.0),
-    Vec4::new(0.22, 0.55, 0.50, 1.0),
-    Vec4::new(0.49, 0.38, 0.67, 1.0),
-    Vec4::new(0.64, 0.43, 0.23, 1.0),
-    Vec4::new(0.65, 0.34, 0.43, 1.0),
-    Vec4::new(0.34, 0.53, 0.31, 1.0),
-    Vec4::new(0.29, 0.47, 0.57, 1.0),
+    Vec4::new(0.16, 0.34, 0.53, 1.0),
+    Vec4::new(0.12, 0.39, 0.34, 1.0),
+    Vec4::new(0.34, 0.24, 0.50, 1.0),
+    Vec4::new(0.47, 0.29, 0.13, 1.0),
+    Vec4::new(0.47, 0.21, 0.29, 1.0),
+    Vec4::new(0.23, 0.39, 0.20, 1.0),
+    Vec4::new(0.18, 0.35, 0.43, 1.0),
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -195,6 +194,8 @@ pub struct CalendarWidget {
     cursor: Vec2,
     hits: HitMap,
     today_button: Button,
+    settings_button: Button,
+    settings: SettingsWidget,
     editor: EditorWidget,
 }
 
@@ -209,6 +210,8 @@ impl CalendarWidget {
             cursor: Vec2::ZERO,
             hits: HitMap::default(),
             today_button: Button::default(),
+            settings_button: Button::default(),
+            settings: SettingsWidget::new(),
             editor: EditorWidget::new(),
         }
     }
@@ -228,7 +231,9 @@ impl CalendarWidget {
         point: Vec2,
         kind: GestureKind,
     ) {
-        if self.today_button.press(pointer, point) {
+        if self.settings_button.press(pointer, point)
+            || self.today_button.press(pointer, point)
+        {
             self.navigation = None;
             self.pointer = PointerState::Idle;
             context.request_redraw();
@@ -256,6 +261,8 @@ impl CalendarWidget {
         hover_capable: bool,
     ) {
         self.today_button
+            .pointer_moved(pointer, point, hover_capable);
+        self.settings_button
             .pointer_moved(pointer, point, hover_capable);
         let hovered_date = self.date_at(point);
         let state = std::mem::replace(&mut self.pointer, PointerState::Idle);
@@ -344,20 +351,19 @@ impl CalendarWidget {
             other => other,
         };
         if hover_capable {
-            let cursor = if matches!(
-                self.pointer,
-                PointerState::Creating { .. } | PointerState::Resizing { .. }
-            ) {
-                CursorIcon::Grabbing
-            } else if self.today_button.contains(point) {
-                CursorIcon::Pointer
-            } else {
-                match self.hits.target_at(point) {
-                    Some(PressTarget::Endpoint { .. }) => CursorIcon::EwResize,
-                    Some(PressTarget::Day(_)) => CursorIcon::Grab,
-                    Some(PressTarget::Event(_)) => CursorIcon::Pointer,
-                    None => CursorIcon::Default,
+            let cursor = match self.pointer {
+                PointerState::Creating { .. } => CursorIcon::Pointer,
+                PointerState::Resizing { .. } => CursorIcon::EwResize,
+                _ if self.today_button.contains(point)
+                    || self.settings_button.contains(point) =>
+                {
+                    CursorIcon::Pointer
                 }
+                _ => match self.hits.target_at(point) {
+                    Some(PressTarget::Endpoint { .. }) => CursorIcon::EwResize,
+                    Some(PressTarget::Day(_) | PressTarget::Event(_)) => CursorIcon::Pointer,
+                    None => CursorIcon::Default,
+                },
             };
             context.set_cursor(cursor);
         }
@@ -365,22 +371,36 @@ impl CalendarWidget {
     }
 
     fn pointer_up(&mut self, context: &mut AppContext<'_>, pointer: u64, point: Vec2) {
-        match self.today_button.release(pointer, point) {
-            ButtonRelease::Activated => {
-                let today = Local::now().date_naive();
-                self.navigation = Some(Navigation {
-                    target_week: week_start(today),
-                    last_tick: context.now(),
-                });
-                self.pointer = PointerState::Idle;
-                context.request_redraw();
-                return;
+        let settings = self.settings_button.release(pointer, point);
+        let today_button = self.today_button.release(pointer, point);
+        if settings == ButtonRelease::Activated {
+            self.settings.open(context);
+            self.pointer = PointerState::Idle;
+            if pointer == MOUSE_POINTER {
+                context.set_cursor(CursorIcon::Default);
             }
-            ButtonRelease::Cancelled => {
-                context.request_redraw();
-                return;
+            context.request_redraw();
+            return;
+        }
+        if today_button == ButtonRelease::Activated {
+            let today = Local::now().date_naive();
+            self.navigation = Some(Navigation {
+                target_week: week_start(today),
+                last_tick: context.now(),
+            });
+            self.pointer = PointerState::Idle;
+            if pointer == MOUSE_POINTER {
+                context.set_cursor(CursorIcon::Default);
             }
-            ButtonRelease::Ignored => {}
+            context.request_redraw();
+            return;
+        }
+        if settings != ButtonRelease::Ignored || today_button != ButtonRelease::Ignored {
+            if pointer == MOUSE_POINTER {
+                context.set_cursor(CursorIcon::Default);
+            }
+            context.request_redraw();
+            return;
         }
         let state = std::mem::replace(&mut self.pointer, PointerState::Idle);
         match state {
@@ -435,8 +455,8 @@ impl CalendarWidget {
                 current,
             } if active == pointer => {
                 let operation = match endpoint {
-                    Endpoint::Start if current > fixed => CalendarTxn::DeleteEvent { id },
-                    Endpoint::End if current < fixed => CalendarTxn::DeleteEvent { id },
+                    Endpoint::Start if current >= fixed => CalendarTxn::DeleteEvent { id },
+                    Endpoint::End if current <= fixed => CalendarTxn::DeleteEvent { id },
                     Endpoint::Start => CalendarTxn::SetEventStart {
                         id,
                         start_date: current,
@@ -451,6 +471,9 @@ impl CalendarWidget {
                 }
             }
             other => self.pointer = other,
+        }
+        if pointer == MOUSE_POINTER {
+            context.set_cursor(CursorIcon::Default);
         }
         context.request_redraw();
     }
@@ -488,13 +511,22 @@ impl Widget<AppContext<'_>, Event> for CalendarWidget {
             let row_height = (viewport.x / 7.0 * 1.02).clamp(184.0 * scale, 228.0 * scale);
             let cell_width = viewport.x / 7.0;
             let grid_width = scale.max(1.0);
+            let today = Local::now().date_naive();
+            let day_colors = context.model.calendar().settings().day_colors;
             self.today_button.set_rect(Rect::new(
                 viewport.x - 124.0 * scale,
                 11.0 * scale,
                 104.0 * scale,
                 42.0 * scale,
             ));
+            self.settings_button.set_rect(Rect::new(
+                self.today_button.rect().position.x - 116.0 * scale,
+                11.0 * scale,
+                104.0 * scale,
+                42.0 * scale,
+            ));
             self.today_button.set_hover(self.cursor);
+            self.settings_button.set_hover(self.cursor);
 
             if let Some(navigation) = &self.navigation {
                 let target_week = navigation.target_week;
@@ -552,26 +584,26 @@ impl Widget<AppContext<'_>, Event> for CalendarWidget {
                         cell_width,
                         row_height,
                     );
-                    context.quad(rect, if column == 0 || column == 6 { WEEKEND } else { CELL });
-                    context.quad(
-                        Rect::new(
-                            rect.right() - grid_width,
-                            rect.position.y,
-                            grid_width,
-                            rect.size.y,
-                        ),
-                        GRID,
-                    );
-                    context.quad(
-                        Rect::new(
-                            rect.position.x,
-                            rect.bottom() - grid_width,
-                            rect.size.x,
-                            grid_width,
-                        ),
-                        GRID,
-                    );
-                    if date == Local::now().date_naive() {
+                    let weekend = column == 0 || column == 6;
+                    let color = if date < today {
+                        if weekend {
+                            day_colors.past_weekend
+                        } else {
+                            day_colors.past_weekday
+                        }
+                    } else if date == today {
+                        if weekend {
+                            day_colors.today_weekend
+                        } else {
+                            day_colors.today_weekday
+                        }
+                    } else if weekend {
+                        day_colors.upcoming_weekend
+                    } else {
+                        day_colors.upcoming_weekday
+                    };
+                    context.quad(rect, Vec4::from_array(color.rgba()));
+                    if date == today {
                         context.rounded_rect(
                             Rect::new(
                                 rect.position.x + 8.0 * scale,
@@ -742,11 +774,13 @@ impl Widget<AppContext<'_>, Event> for CalendarWidget {
                 }
             }
 
-            let hovered_target = (!self.editor.is_open()
-                && !self.today_button.contains(self.cursor))
+            let modal_open = self.editor.is_open() || self.settings.is_open();
+            let hovered_target = (!modal_open
+                && !self.today_button.contains(self.cursor)
+                && !self.settings_button.contains(self.cursor))
                 .then(|| self.hits.target_at(self.cursor))
                 .flatten();
-            let pressed_target = if self.editor.is_open() {
+            let pressed_target = if modal_open {
                 None
             } else {
                 match &self.pointer {
@@ -779,11 +813,44 @@ impl Widget<AppContext<'_>, Event> for CalendarWidget {
                 if state != SurfaceState::Idle {
                     paint_surface(
                         context,
-                        hit.rect.inset(grid_width),
+                        hit.rect,
                         0.0,
-                        2.0 * scale,
+                        if state == SurfaceState::Hovered {
+                            0.0
+                        } else {
+                            2.0 * scale
+                        },
                         state,
                         DAY_SURFACE,
+                    );
+                }
+            }
+
+            for week in &weeks {
+                for column in 0..7 {
+                    let rect = Rect::new(
+                        column as f32 * cell_width,
+                        week.rect.position.y,
+                        cell_width,
+                        row_height,
+                    );
+                    context.quad(
+                        Rect::new(
+                            rect.right() - grid_width,
+                            rect.position.y,
+                            grid_width,
+                            rect.size.y,
+                        ),
+                        GRID,
+                    );
+                    context.quad(
+                        Rect::new(
+                            rect.position.x,
+                            rect.bottom() - grid_width,
+                            rect.size.x,
+                            grid_width,
+                        ),
+                        GRID,
                     );
                 }
             }
@@ -800,7 +867,7 @@ impl Widget<AppContext<'_>, Event> for CalendarWidget {
                         row_height,
                     );
                     let number = date.day().to_string();
-                    let today = date == Local::now().date_naive();
+                    let is_today = date == today;
                     let _ = context.text(
                         &number,
                         Rect::new(
@@ -810,7 +877,7 @@ impl Widget<AppContext<'_>, Event> for CalendarWidget {
                             34.0 * scale,
                         ),
                         18.0 * scale,
-                        if today { BACKGROUND } else { TEXT },
+                        if is_today { BACKGROUND } else { TEXT },
                         HorizontalAlign::Center,
                         VerticalAlign::Center,
                         false,
@@ -1007,7 +1074,7 @@ impl Widget<AppContext<'_>, Event> for CalendarWidget {
                     Rect::new(
                         360.0 * scale,
                         11.0 * scale,
-                        (self.today_button.rect().position.x - 380.0 * scale).max(0.0),
+                        (self.settings_button.rect().position.x - 380.0 * scale).max(0.0),
                         42.0 * scale,
                     ),
                     12.5 * scale,
@@ -1017,13 +1084,19 @@ impl Widget<AppContext<'_>, Event> for CalendarWidget {
                     false,
                 );
             }
+            self.settings_button
+                .paint(context, "Settings", 14.0, scale, NEUTRAL_BUTTON);
             self.today_button
-                .paint(context, "TODAY", 14.0, scale, PRIMARY_BUTTON);
+                .paint(context, "Today", 14.0, scale, PRIMARY_BUTTON);
 
             let _ = self.editor.handle_event(context, event);
+            let _ = self.settings.handle_event(context, event);
             return EventFlow::NotConsumed;
         }
 
+        if self.settings.is_open() {
+            return self.settings.handle_event(context, event);
+        }
         if self.editor.is_open() {
             return self.editor.handle_event(context, event);
         }
@@ -1115,6 +1188,7 @@ impl Widget<AppContext<'_>, Event> for CalendarWidget {
                     TouchPhase::Cancelled => {
                         self.pointer = PointerState::Idle;
                         self.today_button.cancel();
+                        self.settings_button.cancel();
                         context.request_redraw();
                     }
                 }
@@ -1131,6 +1205,8 @@ impl Widget<AppContext<'_>, Event> for CalendarWidget {
                 self.move_scroll(-amount, row_height);
                 self.pointer = PointerState::Idle;
                 self.today_button.cancel();
+                self.settings_button.cancel();
+                context.set_cursor(CursorIcon::Default);
                 context.request_redraw();
             }
             Event::Input(InputEvent::Keyboard(key))
@@ -1140,11 +1216,14 @@ impl Widget<AppContext<'_>, Event> for CalendarWidget {
                 self.pointer = PointerState::Idle;
                 self.navigation = None;
                 self.today_button.cancel();
+                self.settings_button.cancel();
+                context.set_cursor(CursorIcon::Default);
                 context.request_redraw();
             }
             Event::Host(HostEvent::Focused { focused: false }) => {
                 self.pointer = PointerState::Idle;
                 self.today_button.cancel();
+                self.settings_button.cancel();
                 context.set_cursor(CursorIcon::Default);
                 context.request_redraw();
             }
