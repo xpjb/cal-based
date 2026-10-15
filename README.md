@@ -6,6 +6,8 @@ A Windows-first calendar experiment built from the low-level capabilities in [`b
 
 ![Custom editor](gallery/editor.png)
 
+![Day color settings](gallery/settings.png)
+
 ## Calendar behavior
 
 - One Sunday–Saturday week per row.
@@ -13,11 +15,12 @@ A Windows-first calendar experiment built from the low-level capabilities in [`b
 - Events span inclusive date ranges and render as rounded strips along the bottom of each week.
 - Overlapping events receive stable, bottom-up lanes. The first four lanes render.
 - Type, spacing, hit areas, and editor controls scale with the Windows display scale.
+- Past, today, and upcoming weekdays and weekends have six distinct colors. Use **Settings** to change any of them.
 - Hover, pressed, and dragging states are visible on every interactive calendar surface.
-- Click a day or event strip to open its description editor.
+- Click a day or event strip to open its description editor. Clicking outside the editor closes it.
 - With a mouse, drag a day immediately to create an event and drag an event endpoint immediately to resize it.
 - On touch, long-press a day or endpoint before dragging.
-- Drag an endpoint past the other endpoint and release to delete the event.
+- Drag an endpoint onto or past the other endpoint and release to delete the event.
 - Use the mouse wheel or trackpad to move through continuous weeks. **Today** eases back with the current week aligned to the top; manual input stops the motion immediately.
 
 The editor is a custom `based` widget. It stores text in a `ropey::Rope` and uses Sanscale's own layout for wrapping, hit testing, selection, caret motion, and rendering. `Ctrl+Enter` saves and `Escape` cancels.
@@ -34,6 +37,7 @@ The stored model corresponds to:
 /events/<event_id>/start_date
 /events/<event_id>/end_date
 /events/<event_id>/description
+/settings/day_colors/<past|today|upcoming>_<weekday|weekend>
 ```
 
 Day-event memberships are rebuilt from the global event records when the file opens, so redundant paths cannot drift.
@@ -49,7 +53,7 @@ The application composes only these low-level `based` services:
 - `Sanscale`
 - `Input`
 
-Every application widget receives one concrete `AppContext`, including `&mut AppModel`. The Windows host, calendar widget, editor widget, reusable interactive surfaces, and GPU painter are separate modules. Buttons own their hover and press state. Calendar cells, events, endpoints, and text fields use the same explicit idle, hovered, pressed, and dragging surface states.
+Every application widget receives one concrete `AppContext`, including `&mut AppModel`. The Windows host, calendar widget, editor widget, settings widget, reusable interactive surfaces, and GPU painter are separate modules. Buttons own their hover and press state. Calendar cells, events, endpoints, and text fields use the same explicit idle, hovered, pressed, and dragging surface states.
 
 Rounded surfaces are single GPU quads. The fragment shader computes the radius, border, and antialias coverage, so controls do not depend on CPU polygon tessellation.
 
@@ -69,8 +73,8 @@ This repository pins a private `based` revision, so the build requires repositor
 The release script writes:
 
 ```text
-dist/cal-based-0.1.2-windows-x64.exe
-dist/cal-based-0.1.2-windows-x64.exe.sha256
+dist/cal-based-0.1.3-windows-x64.exe
+dist/cal-based-0.1.3-windows-x64.exe.sha256
 ```
 
 Rust checks use the managed Cargo binary, Nextest for behavioral tests, and `cargo xwin` for the Windows target. Clippy is not part of this project workflow.
