@@ -5,6 +5,7 @@ mod event;
 mod paint;
 mod settings;
 mod text_area;
+mod text_edit;
 mod ui;
 
 pub(crate) use calendar::*;
@@ -227,9 +228,8 @@ pub fn run() -> Result<(), String> {
         ProjectDirs::from("dev", "xpjb", "cal-based")
             .map(|directories| directories.data_local_dir().join("calendar.json"))
     });
-    let data_path = data_path.ok_or_else(|| {
-        "Windows local data directory is unavailable".to_owned()
-    })?;
+    let data_path = data_path
+        .ok_or_else(|| "Local data directory is unavailable".to_owned())?;
     winit::run(move |host, events| {
         let window = host.create_window(WindowConfig {
             title: "Cal · based".into(),

@@ -7,6 +7,7 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/xpjb/cal-based"
 
 [dependencies]
+arboard = { version = "3", default-features = false }
 based = { git = "ssh://git@github.com/xpjb/based.git", rev = "c7f002ba0f20d22c363a885692e9c94d5b44fe22", features = ["wgpu", "sanscale"] }
 bytemuck = { version = "1", features = ["derive"] }
 chrono = { version = "0.4", features = ["clock", "serde"] }
@@ -17,9 +18,6 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
 uuid = { version = "1", features = ["serde", "v4"] }
-
-[target.'cfg(target_os = "windows")'.dependencies]
-arboard = "3"
 
 [dev-dependencies]
 tempfile = "3"

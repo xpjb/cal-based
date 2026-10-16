@@ -1,4 +1,4 @@
-use crate::text_edit::TextEdit;
+use super::text_edit::TextEdit;
 use crate::*;
 use std::time::Duration;
 

@@ -1,6 +1,6 @@
 # cal-based
 
-A Windows-first calendar experiment built from the low-level capabilities in [`based`](https://github.com/xpjb/based).
+A desktop calendar experiment built from the low-level capabilities in [`based`](https://github.com/xpjb/based).
 
 ![Calendar](gallery/calendar.png)
 
@@ -14,7 +14,7 @@ A Windows-first calendar experiment built from the low-level capabilities in [`b
 - Every day has an editable description.
 - Events span inclusive date ranges and render as rounded strips along the bottom of each week.
 - Overlapping events receive stable, bottom-up lanes. The first four lanes render.
-- Type, spacing, hit areas, and editor controls scale with the Windows display scale.
+- Type, spacing, hit areas, and editor controls scale with the display scale.
 - Past, today, and upcoming weekdays and weekends have six distinct colors. Use **Settings** to change any of them.
 - Hover, pressed, and dragging states are visible on every interactive calendar surface.
 - Click a day or event strip to open its description editor. Clicking outside the editor closes it.
@@ -46,7 +46,7 @@ The stored model corresponds to:
 
 Day-event memberships are rebuilt from the global event records when the file opens, so redundant paths cannot drift.
 
-The default file is under the Windows local application-data directory. Set `CAL_BASED_DATA` to use a specific JSON file.
+The default file is under the platform's local application-data directory. Set `CAL_BASED_DATA` to use a specific JSON file.
 
 ## Architecture
 
@@ -59,11 +59,11 @@ The application composes only these low-level `based` services:
 
 Once the selected backend has a native target, one procedural initializer creates the window, GPU, text renderer, state client, and complete `App` in dependency order. The application has no partial `Runtime` state.
 
-Every application widget receives one concrete `AppContext`, including only `&mut dyn StateClient` for state access. Widget-scoped mirrors consume broadcast `Event::User` responses, while the backing store and event sender stay inside `App`. The Windows app shell, calendar widget, day widgets, calendar events, editor widget, settings widget, reusable interactive surfaces, and GPU painter are separate modules. Buttons own their hover and press state. Calendar cells, events, endpoints, and text fields use the same explicit idle, hovered, pressed, and dragging surface states.
+Every application widget receives one concrete `AppContext`, including only `&mut dyn StateClient` for state access. Widget-scoped mirrors consume broadcast `Event::User` responses, while the backing store and event sender stay inside `App`. The desktop app shell, calendar widget, day widgets, calendar events, editor widget, settings widget, reusable interactive surfaces, and GPU painter are separate modules. Buttons own their hover and press state. Calendar cells, events, endpoints, and text fields use the same explicit idle, hovered, pressed, and dragging surface states.
 
 Rounded surfaces are single GPU quads. The fragment shader computes the radius, border, and antialias coverage, so controls do not depend on CPU polygon tessellation.
 
-The model, transaction vocabulary, interval-lane assignment, and persistence code remain platform-neutral. A later Android host can reuse them without changing calendar semantics.
+The widget tree, model, transaction vocabulary, interval-lane assignment, and persistence code are not gated to one desktop OS. A later Android host can reuse the platform-neutral parts without changing calendar semantics.
 
 Networking and tailnet replication are intentionally not implemented in this experiment.
 
@@ -72,6 +72,7 @@ Networking and tailnet replication are intentionally not implemented in this exp
 This repository pins a private `based` revision, so the build requires repository access and working GitHub SSH credentials.
 
 ```sh
+cargo run
 ./scripts/check.sh
 ./scripts/build-windows.sh
 ```
@@ -83,4 +84,4 @@ dist/cal-based-0.1.3-windows-x64.exe
 dist/cal-based-0.1.3-windows-x64.exe.sha256
 ```
 
-Rust checks use the managed Cargo binary, Nextest for behavioral tests, and `cargo xwin` for the Windows target. Clippy is not part of this project workflow.
+Rust checks compile every native target, run behavioral tests with Nextest, and use `cargo xwin` for the Windows target. Clippy is not part of this project workflow.
