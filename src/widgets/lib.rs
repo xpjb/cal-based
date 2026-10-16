@@ -18,10 +18,15 @@ pub(crate) use settings::*;
 pub(crate) use ui::*;
 
 use crate::*;
-use std::{env, path::PathBuf};
+use std::{
+    env,
+    path::PathBuf,
+    sync::mpsc::{self, RecvTimeoutError},
+    thread,
+};
 
 use based::{
-    Event, EventFlow, HostContext, HostEvent, Widget,
+    Event, EventFlow, HostEvent, Widget,
     backend::winit,
     glam::{UVec2, Vec2, Vec4},
     web_time::Instant,
@@ -140,6 +145,7 @@ struct App {
     renderer: Renderer,
     gpu: Wgpu,
     window: Window,
+    wake: mpsc::Sender<Option<Instant>>,
 }
 
 impl App {
@@ -166,8 +172,8 @@ impl App {
     }
 }
 
-impl Widget<HostContext<'_>, AppEvent> for App {
-    fn handle_event(&mut self, host: &mut HostContext<'_>, event: &AppEvent) -> EventFlow {
+impl Widget<(), AppEvent> for App {
+    fn handle_event(&mut self, _context: &mut (), event: &AppEvent) -> EventFlow {
         let destroying = matches!(
             event,
             Event::Host(HostEvent::TargetDestroyed | HostEvent::WindowDestroyed)
@@ -176,11 +182,11 @@ impl Widget<HostContext<'_>, AppEvent> for App {
             let flow = self.dispatch(None, event).0;
             let _ = self.text.handle_event(&mut self.gpu, event);
             let _ = self.gpu.handle_event(&mut self.window, event);
-            let _ = self.window.handle_event(host, event);
+            let _ = self.window.handle_event(&mut (), event);
             return flow;
         }
 
-        let _ = self.window.handle_event(host, event);
+        let _ = self.window.handle_event(&mut (), event);
         let _ = self.gpu.handle_event(&mut self.window, event);
         let _ = self.text.handle_event(&mut self.gpu, event);
 
@@ -210,15 +216,12 @@ impl Widget<HostContext<'_>, AppEvent> for App {
         }
 
         if let Some(error) = self.gpu.take_error() {
-            host.fail(error);
-        } else if matches!(event, Event::Host(HostEvent::CloseRequested))
-            && flow == EventFlow::NotConsumed
+            panic!("{error}");
+        }
+        if matches!(event, Event::Host(HostEvent::AboutToWait))
+            && self.wake.send(next_wake).is_err()
         {
-            host.exit();
-        } else if matches!(event, Event::Host(HostEvent::AboutToWait)) {
-            host.set_loop_control(next_wake.map_or(based::LoopControl::Wait, |instant| {
-                based::LoopControl::WaitUntil { instant }
-            }));
+            panic!("wake timer stopped");
         }
         flow
     }
@@ -231,28 +234,55 @@ pub fn run() -> Result<(), String> {
     });
     let data_path = data_path
         .ok_or_else(|| "Local data directory is unavailable".to_owned())?;
-    winit::run(move |host, events| {
-        let window = host.create_window(WindowConfig {
+    winit::run(
+        WindowConfig {
             title: "Cal · based".into(),
             size: UVec2::new(1180, 820),
             visible: false,
             ..Default::default()
-        })?;
-        window.set_min_inner_size(Some(UVec2::new(720, 520)));
-        window.set_ime_allowed(false);
-        let gpu = pollster::block_on(Wgpu::new(&window, WgpuConfig::default()))?;
-        let text = Sanscale::from_static(&gpu, include_bytes!("../../assets/Roboto.ttf"))?;
-        let state = CalendarState::open(&data_path, events)
-            .map_err(|error| error.to_string())?;
-        let renderer = Renderer::new(&gpu);
-        Ok(App {
-            calendar: CalendarWidget::new(),
-            state,
-            input: Input::default(),
-            text,
-            renderer,
-            gpu,
-            window,
-        })
-    })
+        },
+        move |window, events| {
+            window.set_min_inner_size(Some(UVec2::new(720, 520)));
+            window.set_ime_allowed(false);
+            let gpu = pollster::block_on(Wgpu::new(&window, WgpuConfig::default()))?;
+            let text = Sanscale::from_static(&gpu, include_bytes!("../../assets/Roboto.ttf"))?;
+            let state = CalendarState::open(&data_path, events.clone())
+                .map_err(|error| error.to_string())?;
+            let renderer = Renderer::new(&gpu);
+            let (wake, wake_requests) = mpsc::channel::<Option<Instant>>();
+            thread::spawn(move || {
+                let mut deadline: Option<Instant> = None;
+                loop {
+                    match deadline {
+                        Some(instant) => {
+                            match wake_requests.recv_timeout(
+                                instant.saturating_duration_since(Instant::now()),
+                            ) {
+                                Ok(next) => deadline = next,
+                                Err(RecvTimeoutError::Timeout) => {
+                                    let _ = events.send(HostEvent::Wake.into());
+                                    deadline = None;
+                                }
+                                Err(RecvTimeoutError::Disconnected) => break,
+                            }
+                        }
+                        None => match wake_requests.recv() {
+                            Ok(next) => deadline = next,
+                            Err(_) => break,
+                        },
+                    }
+                }
+            });
+            Ok(App {
+                calendar: CalendarWidget::new(),
+                state,
+                input: Input::default(),
+                text,
+                renderer,
+                gpu,
+                window,
+                wake,
+            })
+        },
+    )
 }

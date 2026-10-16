@@ -4,7 +4,7 @@ use std::{
     path::PathBuf,
 };
 
-use based::UserEventSender;
+use based::{Event, EventSender};
 use chrono::{Days, NaiveDate};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -333,13 +333,13 @@ pub struct CalendarState {
     data: CalendarData,
     path: PathBuf,
     next_request_id: RequestId,
-    events: UserEventSender<StateEvent>,
+    events: EventSender<StateEvent>,
 }
 
 impl CalendarState {
     pub fn open(
         path: impl Into<PathBuf>,
-        events: UserEventSender<StateEvent>,
+        events: EventSender<StateEvent>,
     ) -> Result<Self, StateError> {
         let path = path.into();
         let mut data = if path.exists() {
@@ -388,11 +388,11 @@ impl CalendarState {
             CalendarKey::Event(id) => CalendarValue::Event(self.data.events.get(&id).cloned()),
             CalendarKey::Settings => CalendarValue::Settings(self.data.settings.clone()),
         };
-        let _ = self.events.send(StateEvent::Value {
+        let _ = self.events.send(Event::User(StateEvent::Value {
             request_id,
             key,
             result: Ok(value),
-        });
+        }));
     }
 }
 
@@ -473,10 +473,13 @@ mod tests {
         NaiveDate::from_ymd_opt(2026, 10, day).unwrap()
     }
 
-    fn state_events() -> (UserEventSender<StateEvent>, Arc<Mutex<Vec<StateEvent>>>) {
+    fn state_events() -> (EventSender<StateEvent>, Arc<Mutex<Vec<StateEvent>>>) {
         let events = Arc::new(Mutex::new(Vec::new()));
         let captured = events.clone();
-        let sender = UserEventSender::new(move |event| {
+        let sender = EventSender::new(move |event| {
+            let Event::User(event) = event else {
+                panic!("unexpected non-user event");
+            };
             captured.lock().unwrap().push(event);
             Ok(())
         });
