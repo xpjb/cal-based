@@ -7,5 +7,6 @@ cd "$root"
 cargo_bin=${CARGO:-/usr/local/bin/cargo}
 
 "$cargo_bin" check --locked --all-targets
+"$cargo_bin" check --locked --target wasm32-unknown-unknown --lib --bin cal-based
 "$cargo_bin" nextest run --locked --lib
 "$cargo_bin" xwin check --locked --target x86_64-pc-windows-msvc

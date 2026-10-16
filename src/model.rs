@@ -4,7 +4,7 @@ use std::{
     path::PathBuf,
 };
 
-use based::UserEventSender;
+use based::{Event, EventSender};
 use chrono::{Days, NaiveDate};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -331,15 +331,15 @@ pub enum StateEvent {
 
 pub struct CalendarState {
     data: CalendarData,
-    path: PathBuf,
+    path: Option<PathBuf>,
     next_request_id: RequestId,
-    events: UserEventSender<StateEvent>,
+    events: EventSender<StateEvent>,
 }
 
 impl CalendarState {
     pub fn open(
         path: impl Into<PathBuf>,
-        events: UserEventSender<StateEvent>,
+        events: EventSender<StateEvent>,
     ) -> Result<Self, StateError> {
         let path = path.into();
         let mut data = if path.exists() {
@@ -367,10 +367,19 @@ impl CalendarState {
         }
         Ok(Self {
             data,
-            path,
+            path: Some(path),
             next_request_id: 1,
             events,
         })
+    }
+
+    pub fn memory(events: EventSender<StateEvent>) -> Self {
+        Self {
+            data: CalendarData::default(),
+            path: None,
+            next_request_id: 1,
+            events,
+        }
     }
 
     fn next_request(&mut self) -> Result<RequestId, StateError> {
@@ -388,11 +397,11 @@ impl CalendarState {
             CalendarKey::Event(id) => CalendarValue::Event(self.data.events.get(&id).cloned()),
             CalendarKey::Settings => CalendarValue::Settings(self.data.settings.clone()),
         };
-        let _ = self.events.send(StateEvent::Value {
+        let _ = self.events.send(Event::User(StateEvent::Value {
             request_id,
             key,
             result: Ok(value),
-        });
+        }));
     }
 }
 
@@ -426,13 +435,15 @@ impl StateClient for CalendarState {
             .collect();
         let mut next = self.data.clone();
         next.apply_transactions(&operations)?;
-        if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent)
+        if let Some(path) = &self.path {
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent)
+                    .map_err(|error| StateError::Write(error.to_string()))?;
+            }
+            let bytes = serde_json::to_vec_pretty(&next)
                 .map_err(|error| StateError::Write(error.to_string()))?;
+            fs::write(path, bytes).map_err(|error| StateError::Write(error.to_string()))?;
         }
-        let bytes = serde_json::to_vec_pretty(&next)
-            .map_err(|error| StateError::Write(error.to_string()))?;
-        fs::write(&self.path, bytes).map_err(|error| StateError::Write(error.to_string()))?;
         self.data = next;
         for key in keys {
             self.send_value(request_id, key);
@@ -473,10 +484,13 @@ mod tests {
         NaiveDate::from_ymd_opt(2026, 10, day).unwrap()
     }
 
-    fn state_events() -> (UserEventSender<StateEvent>, Arc<Mutex<Vec<StateEvent>>>) {
+    fn state_events() -> (EventSender<StateEvent>, Arc<Mutex<Vec<StateEvent>>>) {
         let events = Arc::new(Mutex::new(Vec::new()));
         let captured = events.clone();
-        let sender = UserEventSender::new(move |event| {
+        let sender = EventSender::new(move |event| {
+            let Event::User(event) = event else {
+                panic!("unexpected non-user event");
+            };
             captured.lock().unwrap().push(event);
             Ok(())
         });

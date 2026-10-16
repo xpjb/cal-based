@@ -18,10 +18,11 @@ pub(crate) use settings::*;
 pub(crate) use ui::*;
 
 use crate::*;
+#[cfg(not(target_arch = "wasm32"))]
 use std::{env, path::PathBuf};
 
 use based::{
-    Event, EventFlow, HostContext, HostEvent, Widget,
+    Event, EventFlow, HostEvent, Wake, Widget,
     backend::winit,
     glam::{UVec2, Vec2, Vec4},
     web_time::Instant,
@@ -32,6 +33,7 @@ use based::{
         window::{CursorIcon, Window, WindowConfig},
     },
 };
+#[cfg(not(target_arch = "wasm32"))]
 use directories::ProjectDirs;
 
 pub(crate) type AppEvent = Event<StateEvent>;
@@ -140,6 +142,7 @@ struct App {
     renderer: Renderer,
     gpu: Wgpu,
     window: Window,
+    wake: Wake,
 }
 
 impl App {
@@ -166,8 +169,8 @@ impl App {
     }
 }
 
-impl Widget<HostContext<'_>, AppEvent> for App {
-    fn handle_event(&mut self, host: &mut HostContext<'_>, event: &AppEvent) -> EventFlow {
+impl Widget<(), AppEvent> for App {
+    fn handle_event(&mut self, _context: &mut (), event: &AppEvent) -> EventFlow {
         let destroying = matches!(
             event,
             Event::Host(HostEvent::TargetDestroyed | HostEvent::WindowDestroyed)
@@ -176,11 +179,11 @@ impl Widget<HostContext<'_>, AppEvent> for App {
             let flow = self.dispatch(None, event).0;
             let _ = self.text.handle_event(&mut self.gpu, event);
             let _ = self.gpu.handle_event(&mut self.window, event);
-            let _ = self.window.handle_event(host, event);
+            let _ = self.window.handle_event(&mut (), event);
             return flow;
         }
 
-        let _ = self.window.handle_event(host, event);
+        let _ = self.window.handle_event(&mut (), event);
         let _ = self.gpu.handle_event(&mut self.window, event);
         let _ = self.text.handle_event(&mut self.gpu, event);
 
@@ -210,49 +213,55 @@ impl Widget<HostContext<'_>, AppEvent> for App {
         }
 
         if let Some(error) = self.gpu.take_error() {
-            host.fail(error);
-        } else if matches!(event, Event::Host(HostEvent::CloseRequested))
-            && flow == EventFlow::NotConsumed
+            panic!("{error}");
+        }
+        if matches!(event, Event::Host(HostEvent::AboutToWait))
+            && let Some(instant) = next_wake
         {
-            host.exit();
-        } else if matches!(event, Event::Host(HostEvent::AboutToWait)) {
-            host.set_loop_control(next_wake.map_or(based::LoopControl::Wait, |instant| {
-                based::LoopControl::WaitUntil { instant }
-            }));
+            self.wake
+                .after(instant.saturating_duration_since(Instant::now()));
         }
         flow
     }
 }
 
 pub fn run() -> Result<(), String> {
+    #[cfg(not(target_arch = "wasm32"))]
     let data_path = env::var_os("CAL_BASED_DATA").map(PathBuf::from).or_else(|| {
         ProjectDirs::from("dev", "xpjb", "cal-based")
             .map(|directories| directories.data_local_dir().join("calendar.json"))
     });
+    #[cfg(not(target_arch = "wasm32"))]
     let data_path = data_path
         .ok_or_else(|| "Local data directory is unavailable".to_owned())?;
-    winit::run(move |host, events| {
-        let window = host.create_window(WindowConfig {
+    winit::run(
+        WindowConfig {
             title: "Cal · based".into(),
             size: UVec2::new(1180, 820),
             visible: false,
             ..Default::default()
-        })?;
-        window.set_min_inner_size(Some(UVec2::new(720, 520)));
-        window.set_ime_allowed(false);
-        let gpu = pollster::block_on(Wgpu::new(&window, WgpuConfig::default()))?;
-        let text = Sanscale::from_static(&gpu, include_bytes!("../../assets/Roboto.ttf"))?;
-        let state = CalendarState::open(&data_path, events)
-            .map_err(|error| error.to_string())?;
-        let renderer = Renderer::new(&gpu);
-        Ok(App {
-            calendar: CalendarWidget::new(),
-            state,
-            input: Input::default(),
-            text,
-            renderer,
-            gpu,
-            window,
-        })
-    })
+        },
+        move |window, events, wake| async move {
+            window.set_min_inner_size(Some(UVec2::new(720, 520)));
+            window.set_ime_allowed(false);
+            let gpu = Wgpu::new(&window, WgpuConfig::default()).await?;
+            let text = Sanscale::from_static(&gpu, include_bytes!("../../assets/Roboto.ttf"))?;
+            #[cfg(not(target_arch = "wasm32"))]
+            let state = CalendarState::open(&data_path, events.clone())
+                .map_err(|error| error.to_string())?;
+            #[cfg(target_arch = "wasm32")]
+            let state = CalendarState::memory(events.clone());
+            let renderer = Renderer::new(&gpu);
+            Ok(App {
+                calendar: CalendarWidget::new(),
+                state,
+                input: Input::default(),
+                text,
+                renderer,
+                gpu,
+                window,
+                wake,
+            })
+        },
+    )
 }

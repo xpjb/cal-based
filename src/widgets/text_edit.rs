@@ -171,6 +171,7 @@ impl TextEdit {
         true
     }
 
+    #[cfg(any(not(target_arch = "wasm32"), test))]
     pub fn delete_selection(&mut self) -> bool {
         let Some(range) = self.selection() else {
             return false;
@@ -188,6 +189,7 @@ impl TextEdit {
         self.goal = None;
     }
 
+    #[cfg(any(not(target_arch = "wasm32"), test))]
     pub fn selected_text(&self) -> Option<String> {
         let range = self.selection()?;
         let chars = self.document.rope.byte_to_char(range.start)

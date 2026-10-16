@@ -136,11 +136,13 @@ checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
 [[package]]
 name = "based"
 version = "0.1.0"
-source = "git+ssh://git@github.com/xpjb/based.git?rev=3442891a9a73a11bfe79ad01dc6ee859277f12d0#3442891a9a73a11bfe79ad01dc6ee859277f12d0"
+source = "git+ssh://git@github.com/xpjb/based.git?rev=a75a194b0ec73651c6db402da416ea862f65b0c1#a75a194b0ec73651c6db402da416ea862f65b0c1"
 dependencies = [
  "fontdb",
  "glam",
+ "pollster",
  "sanscale",
+ "wasm-bindgen-futures",
  "web-time",
  "wgpu",
  "winit",
@@ -232,7 +234,6 @@ dependencies = [
  "bytemuck",
  "chrono",
  "directories",
- "pollster",
  "ropey",
  "serde",
  "serde_json",

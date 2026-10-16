@@ -524,6 +524,7 @@ impl Widget<AppContext<'_>, AppEvent> for TextContent {
                                 handled = true;
                             }
                             "c" | "C" => {
+                                #[cfg(not(target_arch = "wasm32"))]
                                 if let Some(selected) = self.edit.selected_text() {
                                     let _ = arboard::Clipboard::new().and_then(
                                         |mut clipboard| clipboard.set_text(selected),
@@ -532,6 +533,7 @@ impl Widget<AppContext<'_>, AppEvent> for TextContent {
                                 handled = true;
                             }
                             "x" | "X" => {
+                                #[cfg(not(target_arch = "wasm32"))]
                                 if let Some(selected) = self.edit.selected_text()
                                     && arboard::Clipboard::new()
                                         .and_then(|mut clipboard| clipboard.set_text(selected))
@@ -543,6 +545,7 @@ impl Widget<AppContext<'_>, AppEvent> for TextContent {
                                 handled = true;
                             }
                             "v" | "V" => {
+                                #[cfg(not(target_arch = "wasm32"))]
                                 if let Ok(value) = arboard::Clipboard::new()
                                     .and_then(|mut clipboard| clipboard.get_text())
                                 {
