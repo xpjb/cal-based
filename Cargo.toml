@@ -8,7 +8,7 @@ repository = "https://github.com/xpjb/cal-based"
 
 [dependencies]
 arboard = { version = "3", default-features = false }
-based = { git = "ssh://git@github.com/xpjb/based.git", rev = "4e3fc12cb83fa270e4dc69ab2c187fc8505af4c7", features = ["wgpu", "sanscale"] }
+based = { git = "ssh://git@github.com/xpjb/based.git", rev = "268c223759d369c990fdaa7d6c60b64a8b659388", features = ["wgpu", "sanscale"] }
 bytemuck = { version = "1", features = ["derive"] }
 chrono = { version = "0.4", features = ["clock", "serde"] }
 directories = "6"

@@ -435,7 +435,7 @@ impl CalendarWidget {
 
 impl Widget<AppContext<'_>, AppEvent> for CalendarWidget {
     fn handle_event(&mut self, context: &mut AppContext<'_>, event: &AppEvent) -> EventFlow {
-        if let Event::User(StateEvent::Value { key, result, .. }) = event {
+        if let Event::User(UserEvent::State(StateEvent::Value { key, result, .. })) = event {
             for day in self.days.values_mut() {
                 let _ = day.handle_event(context, event);
             }

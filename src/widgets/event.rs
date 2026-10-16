@@ -259,11 +259,11 @@ impl From<&CalendarEvent> for EventVisual {
 
 impl Widget<AppContext<'_>, AppEvent> for CalendarEvent {
     fn handle_event(&mut self, _context: &mut AppContext<'_>, event: &AppEvent) -> EventFlow {
-        if let Event::User(StateEvent::Value {
+        if let Event::User(UserEvent::State(StateEvent::Value {
             key: CalendarKey::Event(id),
             result: Ok(CalendarValue::Event(Some(event))),
             ..
-        }) = event
+        })) = event
             && *id == self.id
         {
             self.clone_from(event);

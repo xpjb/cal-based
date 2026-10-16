@@ -27,7 +27,7 @@ The editor is a custom `based` widget. It stores text in a `ropey::Rope` and use
 
 ## State design
 
-All reads and mutations go through the separate `StateClient::request` and `StateClient::transact` operations. Both return a request ID. `CalendarState` applies transactions, writes JSON, and sends each requested or affected value through `based::EventSender<StateEvent>`. There is no response polling or full-state request.
+All reads and mutations go through the separate `StateClient::request` and `StateClient::transact` operations. Both return a request ID. `CalendarState` applies transactions, writes JSON, and sends each requested or affected value through `based::EventSender<UserEvent>`. There is no response polling or full-state request.
 
 Each visible or buffered date has a `DayWidget` that owns only its optional `DayRecord`. The calendar derives the interest window from scroll position, requests newly relevant dates, and drops day widgets outside that range. Day widgets stay passive: matching `Day` values set their text and memberships, while `Event` values keep those memberships current.
 

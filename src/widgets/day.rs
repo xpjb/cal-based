@@ -174,7 +174,7 @@ impl DayWidget {
 
 impl Widget<AppContext<'_>, AppEvent> for DayWidget {
     fn handle_event(&mut self, _context: &mut AppContext<'_>, event: &AppEvent) -> EventFlow {
-        let Event::User(StateEvent::Value { key, result, .. }) = event else {
+        let Event::User(UserEvent::State(StateEvent::Value { key, result, .. })) = event else {
             return EventFlow::NotConsumed;
         };
         match (key, result) {

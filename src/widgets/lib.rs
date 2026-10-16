@@ -39,7 +39,7 @@ use based::{
 };
 use directories::ProjectDirs;
 
-pub(crate) type AppEvent = Event<StateEvent>;
+pub(crate) type AppEvent = Event<UserEvent>;
 
 pub(crate) struct AppContext<'a> {
     window: &'a Window,
@@ -260,7 +260,7 @@ pub fn run() -> Result<(), String> {
                             ) {
                                 Ok(next) => deadline = next,
                                 Err(RecvTimeoutError::Timeout) => {
-                                    let _ = events.send(HostEvent::Wake.into());
+                                    let _ = events.send(Event::User(UserEvent::Timer));
                                     deadline = None;
                                 }
                                 Err(RecvTimeoutError::Disconnected) => break,
