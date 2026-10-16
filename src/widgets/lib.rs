@@ -5,7 +5,6 @@ mod event;
 mod paint;
 mod settings;
 mod text_area;
-mod text_edit;
 mod ui;
 
 pub(crate) use calendar::*;

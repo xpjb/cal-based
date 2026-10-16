@@ -1,4 +1,4 @@
-use super::text_edit::TextEdit;
+use crate::text_edit::TextEdit;
 use crate::*;
 use std::time::Duration;
 
@@ -15,6 +15,11 @@ use based::{
 
 const BASE_FONT_SIZE: f32 = 18.0;
 const CARET_PERIOD: Duration = Duration::from_millis(530);
+const MULTI_CLICK_DELAY: Duration = Duration::from_millis(500);
+const MULTI_CLICK_DISTANCE: f32 = 5.0;
+const DRAG_SCROLL_FRAME: Duration = Duration::from_millis(16);
+const DRAG_SCROLL_MAX_STEP: f32 = 0.05;
+const DRAG_SCROLL_RATE: f32 = 0.05;
 const INPUT_BG: Vec4 = Vec4::new(0.031, 0.038, 0.049, 1.0);
 const SELECTION: Vec4 = Vec4::new(0.17, 0.36, 0.68, 0.62);
 const INPUT_SURFACE: SurfaceStyle = SurfaceStyle {
@@ -39,6 +44,13 @@ struct TextAreaLayout {
     font_size: f32,
 }
 
+#[derive(Clone, Copy)]
+struct LastClick {
+    time: Instant,
+    position: Vec2,
+    count: u8,
+}
+
 pub struct TextArea {
     edit: TextEdit,
     scroll: f32,
@@ -49,6 +61,9 @@ pub struct TextArea {
     modifiers: ModifiersState,
     last_input: Instant,
     blink_phase: u64,
+    last_click: Option<LastClick>,
+    drag_started: bool,
+    drag_scroll_updated: Option<Instant>,
 }
 
 impl TextArea {
@@ -63,6 +78,9 @@ impl TextArea {
             modifiers: ModifiersState::empty(),
             last_input: now,
             blink_phase: 0,
+            last_click: None,
+            drag_started: false,
+            drag_scroll_updated: None,
         }
     }
 
@@ -96,6 +114,7 @@ impl TextArea {
     fn shape(&mut self, context: &mut AppContext<'_>) -> Option<text::ShapedHandle> {
         let layout = self.layout?;
         if self.edit.is_empty() {
+            self.scroll = 0.0;
             self.origin = layout.rect.position + Vec2::new(12.0, 11.0) * layout.scale;
             return None;
         }
@@ -107,23 +126,40 @@ impl TextArea {
         style.align = text::Align::Left;
         style.line_spacing = 1.18;
         let handle = context.text.raw.shape_transient(&content, &style)?;
+        let height = context.text.raw.measure(handle).height_em() * layout.font_size;
+        let max_scroll = (height + 22.0 * layout.scale - layout.rect.size.y).max(0.0);
+        self.scroll = self.scroll.clamp(0.0, max_scroll);
         self.origin = layout.rect.position
             + Vec2::new(12.0 * layout.scale, 11.0 * layout.scale - self.scroll);
         Some(handle)
     }
 
-    fn place_at_cursor(&mut self, context: &mut AppContext<'_>, select: bool) {
+    fn place_at_cursor(
+        &mut self,
+        context: &mut AppContext<'_>,
+        select: bool,
+        click_count: u8,
+    ) {
         let Some(layout) = self.layout else {
             return;
         };
         let handle = self.shape(context);
         if let Some(handle) = handle {
-            let em = text::Vec2::new(
-                (self.cursor.x - self.origin.x) / layout.font_size,
-                (self.cursor.y - self.origin.y) / layout.font_size,
+            let point = Vec2::new(
+                self.cursor.x.clamp(layout.rect.position.x, layout.rect.right()),
+                self.cursor.y.clamp(layout.rect.position.y, layout.rect.bottom()),
             );
-            if let Some(caret) = context.text.raw.measure(handle).hit_test(em) {
-                self.edit.place(caret, select);
+            let em = text::Vec2::new(
+                (point.x - self.origin.x) / layout.font_size,
+                (point.y - self.origin.y) / layout.font_size,
+            );
+            let text_layout = context.text.raw.measure(handle);
+            if let Some(caret) = text_layout.hit_test(em) {
+                match click_count {
+                    2 => self.edit.select_word(text_layout, caret.byte_index),
+                    3 => self.edit.select_paragraph(text_layout, caret.byte_index),
+                    _ => self.edit.place(caret, select),
+                }
             }
         } else {
             self.edit.place(
@@ -161,6 +197,11 @@ impl TextArea {
         } else if bottom > layout.rect.size.y - 8.0 * layout.scale {
             self.scroll += bottom - (layout.rect.size.y - 8.0 * layout.scale);
         }
+        let height = text_layout.height_em() * layout.font_size;
+        let max_scroll = (height + 22.0 * layout.scale - layout.rect.size.y).max(0.0);
+        self.scroll = self.scroll.clamp(0.0, max_scroll);
+        self.origin = layout.rect.position
+            + Vec2::new(12.0 * layout.scale, 11.0 * layout.scale - self.scroll);
     }
 }
 
@@ -269,6 +310,47 @@ impl Widget<AppContext<'_>, AppEvent> for TextArea {
 
         match event {
             Event::Host(HostEvent::AboutToWait) => {
+                if self.selecting {
+                    let overshoot = if self.cursor.y < layout.rect.position.y {
+                        self.cursor.y - layout.rect.position.y
+                    } else if self.cursor.y > layout.rect.bottom() {
+                        self.cursor.y - layout.rect.bottom()
+                    } else {
+                        0.0
+                    };
+                    if overshoot != 0.0 {
+                        let dt = self
+                            .drag_scroll_updated
+                            .map(|last| {
+                                context
+                                    .now
+                                    .duration_since(last)
+                                    .as_secs_f32()
+                                    .min(DRAG_SCROLL_MAX_STEP)
+                            })
+                            .unwrap_or(0.0);
+                        self.drag_scroll_updated = Some(context.now);
+                        if dt > 0.0 {
+                            let before = self.scroll;
+                            self.scroll += (DRAG_SCROLL_RATE * overshoot * overshoot)
+                                .copysign(overshoot)
+                                * dt;
+                            self.place_at_cursor(context, true, 1);
+                            if self.scroll != before {
+                                context.wake_at(context.now + DRAG_SCROLL_FRAME);
+                            } else {
+                                self.drag_scroll_updated = None;
+                            }
+                        } else {
+                            context.wake_at(context.now + DRAG_SCROLL_FRAME);
+                        }
+                    } else {
+                        self.drag_scroll_updated = None;
+                    }
+                } else {
+                    self.drag_scroll_updated = None;
+                }
+
                 let elapsed = context.now.duration_since(self.last_input);
                 let phase = (elapsed.as_millis() / CARET_PERIOD.as_millis()) as u64;
                 if phase != self.blink_phase {
@@ -281,6 +363,9 @@ impl Widget<AppContext<'_>, AppEvent> for TextArea {
             }
             Event::Host(HostEvent::Focused { focused: false }) => {
                 self.modifiers = ModifiersState::empty();
+                self.last_click = None;
+                self.drag_started = false;
+                self.drag_scroll_updated = None;
                 if self.selecting {
                     self.selecting = false;
                     context.window.request_redraw();
@@ -290,7 +375,19 @@ impl Widget<AppContext<'_>, AppEvent> for TextArea {
                 let hovered = layout.rect.contains(self.cursor);
                 self.cursor = position.as_vec2();
                 if self.selecting {
-                    self.place_at_cursor(context, true);
+                    if !self.drag_started {
+                        let distance = MULTI_CLICK_DISTANCE * layout.scale;
+                        if self.last_click.is_some_and(|click| {
+                            self.cursor.distance_squared(click.position) <= distance * distance
+                        }) {
+                            return EventFlow::Consumed;
+                        }
+                        self.drag_started = true;
+                    }
+                    if layout.rect.contains(self.cursor) {
+                        self.drag_scroll_updated = None;
+                    }
+                    self.place_at_cursor(context, true, 1);
                     return EventFlow::Consumed;
                 }
                 if hovered != layout.rect.contains(self.cursor) {
@@ -309,10 +406,32 @@ impl Widget<AppContext<'_>, AppEvent> for TextArea {
                     self.cursor = point;
                 }
                 if layout.rect.contains(self.cursor) {
+                    let distance = MULTI_CLICK_DISTANCE * layout.scale;
+                    let count = self.last_click.map_or(1, |last| {
+                        if context.now.duration_since(last.time) <= MULTI_CLICK_DELAY
+                            && self.cursor.distance_squared(last.position) <= distance * distance
+                        {
+                            if last.count >= 3 {
+                                1
+                            } else {
+                                last.count + 1
+                            }
+                        } else {
+                            1
+                        }
+                    });
+                    self.last_click = Some(LastClick {
+                        time: context.now,
+                        position: self.cursor,
+                        count,
+                    });
                     self.selecting = true;
-                    self.place_at_cursor(context, self.modifiers.shift_key());
+                    self.drag_started = false;
+                    self.drag_scroll_updated = None;
+                    self.place_at_cursor(context, self.modifiers.shift_key(), count);
                     return EventFlow::Consumed;
                 }
+                self.last_click = None;
             }
             Event::Input(InputEvent::MouseButton {
                 button: MouseButton::Left,
@@ -324,6 +443,8 @@ impl Widget<AppContext<'_>, AppEvent> for TextArea {
                 }
                 if self.selecting {
                     self.selecting = false;
+                    self.drag_started = false;
+                    self.drag_scroll_updated = None;
                     context.window.request_redraw();
                     return EventFlow::Consumed;
                 }
@@ -335,12 +456,15 @@ impl Widget<AppContext<'_>, AppEvent> for TextArea {
                         ScrollDelta::Pixels { delta } => delta.y as f32,
                     };
                     self.scroll = (self.scroll - amount).max(0.0);
+                    self.last_click = None;
+                    let _ = self.shape(context);
                     context.window.request_redraw();
                     return EventFlow::Consumed;
                 }
             }
             Event::Input(InputEvent::InputMethod(based::InputMethodEvent::Commit { text })) => {
                 self.edit.insert_normalized(text);
+                self.last_click = None;
                 self.last_input = context.now;
                 self.blink_phase = 0;
                 self.keep_caret_visible(context, true);
@@ -446,12 +570,14 @@ impl Widget<AppContext<'_>, AppEvent> for TextArea {
                     }
                 }
                 if edited || moved {
+                    self.last_click = None;
                     self.last_input = context.now;
                     self.blink_phase = 0;
                     self.keep_caret_visible(context, edited);
                     context.window.request_redraw();
                 }
                 if handled {
+                    self.last_click = None;
                     return EventFlow::Consumed;
                 }
             }

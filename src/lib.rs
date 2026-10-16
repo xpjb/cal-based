@@ -1,3 +1,7 @@
+#[cfg(any(test, target_os = "windows"))]
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+mod text_edit;
+
 pub mod model;
 
 #[cfg(target_os = "windows")]

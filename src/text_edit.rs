@@ -20,6 +20,22 @@ impl Document {
         self.rope.remove(start..end);
         self.rope.insert(start, insert);
     }
+
+    fn paragraph_range(&self, byte: usize) -> Range<usize> {
+        let byte = byte.min(self.rope.len_bytes());
+        let line = self.rope.char_to_line(self.rope.byte_to_char(byte));
+        let start = self.rope.line_to_byte(line);
+        let end = if line + 1 < self.rope.len_lines() {
+            self.rope.line_to_byte(line + 1)
+        } else {
+            self.rope.len_bytes()
+        };
+        if start == end && start > 0 && self.rope.byte(start - 1) == b'\n' {
+            start - 1..end
+        } else {
+            start..end
+        }
+    }
 }
 
 impl WordBoundaries for Document {
@@ -113,6 +129,14 @@ impl TextEdit {
         self.set_caret(caret, select);
     }
 
+    pub fn select_word(&mut self, layout: &Layout, byte: usize) {
+        self.select_range(layout, layout.select_word_at(byte, &self.document));
+    }
+
+    pub fn select_paragraph(&mut self, layout: &Layout, byte: usize) {
+        self.select_range(layout, self.document.paragraph_range(byte));
+    }
+
     pub fn insert(&mut self, text: &str) {
         let byte = self.caret.byte_index;
         let range = self.selection().unwrap_or(byte..byte);
@@ -190,6 +214,12 @@ impl TextEdit {
         self.caret = caret;
     }
 
+    fn select_range(&mut self, layout: &Layout, range: Range<usize>) {
+        self.anchor = Some(range.start);
+        self.caret = layout.caret_at(range.end);
+        self.goal = None;
+    }
+
     fn replace(&mut self, range: Range<usize>, insert: &str) {
         let at = range.start;
         self.document.replace(range, insert);
@@ -201,4 +231,92 @@ impl TextEdit {
 
 fn normalize(text: &str) -> String {
     text.replace("\r\n", "\n").replace('\r', "\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use based::widget::sanscale::raw::{CaretStop, LayoutLineSpec, LineMetrics};
+
+    fn line(byte_range: Range<usize>, top_em: f32) -> LayoutLineSpec {
+        let width_em = byte_range.len() as f32;
+        let carets = (byte_range.start..=byte_range.end)
+            .map(|byte_index| CaretStop {
+                byte_index,
+                x_em: (byte_index - byte_range.start) as f32,
+            })
+            .collect();
+        LayoutLineSpec {
+            byte_range,
+            metrics: LineMetrics {
+                top_em,
+                baseline_em: top_em + 0.8,
+                height_em: 1.0,
+                width_em,
+            },
+            carets,
+        }
+    }
+
+    #[test]
+    fn word_selection_uses_rope_boundaries() {
+        let layout = Layout::from_lines(vec![line(0..10, 0.0)]);
+        let mut edit = TextEdit::new("alpha beta");
+
+        edit.select_word(&layout, 2);
+
+        assert_eq!(edit.selection(), Some(0..5));
+        assert_eq!(edit.selected_text().as_deref(), Some("alpha"));
+    }
+
+    #[test]
+    fn paragraph_selection_includes_the_hard_break() {
+        let layout = Layout::from_lines(vec![
+            line(0..5, 0.0),
+            line(6..12, 1.0),
+            line(13..18, 2.0),
+        ]);
+        let mut edit = TextEdit::new("first\nsecond\nthird");
+
+        edit.select_paragraph(&layout, 8);
+
+        assert_eq!(edit.selection(), Some(6..13));
+        assert_eq!(edit.selected_text().as_deref(), Some("second\n"));
+    }
+
+    #[test]
+    fn paragraph_selection_spans_soft_wrapped_lines() {
+        let layout = Layout::from_lines(vec![
+            line(0..2, 0.0),
+            line(2..5, 1.0),
+            line(6..12, 2.0),
+        ]);
+        let mut edit = TextEdit::new("first\nsecond");
+
+        edit.select_paragraph(&layout, 3);
+
+        assert_eq!(edit.selection(), Some(0..6));
+        assert_eq!(edit.selected_text().as_deref(), Some("first\n"));
+    }
+
+    #[test]
+    fn blank_paragraph_selection_selects_its_newline() {
+        let layout = Layout::from_lines(vec![
+            line(0..1, 0.0),
+            line(2..2, 1.0),
+            line(3..4, 2.0),
+        ]);
+        let mut edit = TextEdit::new("a\n\nb");
+
+        edit.select_paragraph(&layout, 2);
+
+        assert_eq!(edit.selection(), Some(2..3));
+        assert_eq!(edit.selected_text().as_deref(), Some("\n"));
+
+        let layout = Layout::from_lines(vec![line(0..1, 0.0), line(2..2, 1.0)]);
+        let mut edit = TextEdit::new("a\n");
+        edit.select_paragraph(&layout, 2);
+        assert_eq!(edit.selection(), Some(1..2));
+        assert_eq!(edit.selected_text().as_deref(), Some("\n"));
+    }
 }
