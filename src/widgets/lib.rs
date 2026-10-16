@@ -3,6 +3,7 @@ mod day;
 mod editor;
 mod event;
 mod paint;
+mod scroll;
 mod settings;
 mod text_area;
 mod text_edit;
