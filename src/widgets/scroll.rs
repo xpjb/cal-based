@@ -14,34 +14,33 @@ const DRAG_RATE: f32 = 0.05;
 #[derive(Clone, Copy, Default, PartialEq)]
 pub(crate) struct Viewport {
     pub client: Rect,
-    pub offset: Vec2,
+    offset: f32,
 }
 
 impl Viewport {
     pub fn to_screen(self, point: Vec2) -> Vec2 {
-        self.client.position + point - self.offset
+        self.client.position + point - Vec2::new(0.0, self.offset)
     }
 
     pub fn to_content(self, point: Vec2) -> Vec2 {
-        self.offset + point - self.client.position
+        point - self.client.position + Vec2::new(0.0, self.offset)
     }
+}
+
+#[derive(Default)]
+pub(crate) struct ScrollState {
+    pub viewport: Viewport,
+    pub content_height: f32,
+    pub reveal: Option<Range<f32>>,
+    pub viewport_changed: bool,
 }
 
 pub(crate) trait ScrollContent {
-    fn set_viewport(&mut self, viewport: Viewport);
-    fn content_height(&self) -> f32;
-
-    fn drag_y(&self) -> Option<f32> {
-        None
-    }
-
-    fn take_reveal(&mut self) -> Option<Range<f32>> {
-        None
-    }
+    fn scroll_state(&mut self) -> (&mut ScrollState, Option<f32>);
 }
 
 pub(crate) struct Scroll<W> {
-    child: W,
+    pub child: W,
     bounds: Rect,
     line_step: f32,
     offset: f32,
@@ -59,37 +58,35 @@ impl<W: ScrollContent> Scroll<W> {
         }
     }
 
-    pub fn child(&self) -> &W {
-        &self.child
-    }
-
-    pub fn child_mut(&mut self) -> &mut W {
-        &mut self.child
-    }
-
     pub fn set_bounds(&mut self, bounds: Rect, line_step: f32) {
         self.bounds = bounds;
         self.line_step = line_step;
-        self.offset = self.offset.clamp(0.0, self.max_offset());
-        let viewport = self.viewport();
-        self.child.set_viewport(viewport);
+        self.clamp_offset();
+        self.sync_viewport();
     }
 
-    fn viewport(&self) -> Viewport {
-        Viewport {
-            client: self.bounds,
-            offset: Vec2::new(0.0, self.offset),
-        }
-    }
-
-    fn max_offset(&self) -> f32 {
-        (self.child.content_height() - self.bounds.size.y).max(0.0)
+    fn clamp_offset(&mut self) {
+        let height = self.child.scroll_state().0.content_height;
+        self.offset = self
+            .offset
+            .clamp(0.0, (height - self.bounds.size.y).max(0.0));
     }
 
     fn move_by(&mut self, delta: f32) -> bool {
         let before = self.offset;
-        self.offset = (before + delta).clamp(0.0, self.max_offset());
+        self.offset += delta;
+        self.clamp_offset();
         self.offset != before
+    }
+
+    fn sync_viewport(&mut self) {
+        let viewport = Viewport {
+            client: self.bounds,
+            offset: self.offset,
+        };
+        let state = self.child.scroll_state().0;
+        state.viewport_changed |= state.viewport != viewport;
+        state.viewport = viewport;
     }
 }
 
@@ -98,44 +95,39 @@ where
     W: ScrollContent + for<'context> Widget<AppContext<'context>, AppEvent>,
 {
     fn handle_event(&mut self, context: &mut AppContext<'_>, event: &AppEvent) -> EventFlow {
-        self.offset = self.offset.clamp(0.0, self.max_offset());
+        self.clamp_offset();
         let waiting = matches!(event, Event::Host(HostEvent::AboutToWait));
 
         if waiting {
-            if let Some(y) = self.child.drag_y() {
-                let overshoot = if y < self.bounds.position.y {
-                    y - self.bounds.position.y
-                } else if y > self.bounds.bottom() {
-                    y - self.bounds.bottom()
+            let overshoot = match self.child.scroll_state().1 {
+                Some(y) if y < self.bounds.position.y => y - self.bounds.position.y,
+                Some(y) if y > self.bounds.bottom() => y - self.bounds.bottom(),
+                _ => 0.0,
+            };
+            if overshoot == 0.0 {
+                self.drag_updated = None;
+            } else {
+                let dt = self
+                    .drag_updated
+                    .replace(context.now)
+                    .map(|last| {
+                        context
+                            .now
+                            .duration_since(last)
+                            .as_secs_f32()
+                            .min(DRAG_MAX_STEP)
+                    })
+                    .unwrap_or(0.0);
+                if dt == 0.0 {
+                    context.wake_at(context.now + DRAG_FRAME);
+                } else if self.move_by(
+                    (DRAG_RATE * overshoot * overshoot).copysign(overshoot) * dt,
+                ) {
+                    context.window.request_redraw();
+                    context.wake_at(context.now + DRAG_FRAME);
                 } else {
                     self.drag_updated = None;
-                    0.0
-                };
-                if overshoot != 0.0 {
-                    let dt = self
-                        .drag_updated
-                        .map(|last| {
-                            context
-                                .now
-                                .duration_since(last)
-                                .as_secs_f32()
-                                .min(DRAG_MAX_STEP)
-                        })
-                        .unwrap_or(0.0);
-                    self.drag_updated = Some(context.now);
-                    if dt == 0.0 {
-                        context.wake_at(context.now + DRAG_FRAME);
-                    } else if self.move_by(
-                        (DRAG_RATE * overshoot * overshoot).copysign(overshoot) * dt,
-                    ) {
-                        context.window.request_redraw();
-                        context.wake_at(context.now + DRAG_FRAME);
-                    } else {
-                        self.drag_updated = None;
-                    }
                 }
-            } else {
-                self.drag_updated = None;
             }
         }
 
@@ -156,27 +148,25 @@ where
             false
         };
 
-        let viewport = self.viewport();
-        self.child.set_viewport(viewport);
+        self.sync_viewport();
         let child_flow = self.child.handle_event(context, event);
 
         let before = self.offset;
-        self.offset = self.offset.clamp(0.0, self.max_offset());
-        if let Some(range) = self.child.take_reveal() {
+        self.clamp_offset();
+        if let Some(range) = self.child.scroll_state().0.reveal.take() {
             if range.start < self.offset {
                 self.offset = range.start;
             } else if range.end > self.offset + self.bounds.size.y {
                 self.offset = range.end - self.bounds.size.y;
             }
-            self.offset = self.offset.clamp(0.0, self.max_offset());
+            self.clamp_offset();
         }
         if self.offset != before {
-            let viewport = self.viewport();
-            self.child.set_viewport(viewport);
+            self.sync_viewport();
             context.window.request_redraw();
         }
 
-        if let Some(y) = self.child.drag_y() {
+        if let Some(y) = self.child.scroll_state().1 {
             if y >= self.bounds.position.y && y <= self.bounds.bottom() {
                 self.drag_updated = None;
             } else if !waiting && self.drag_updated.is_none() {

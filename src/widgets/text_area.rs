@@ -1,9 +1,9 @@
 use super::{
-    scroll::{Scroll, ScrollContent, Viewport},
+    scroll::{Scroll, ScrollContent, ScrollState},
     text_edit::TextEdit,
 };
 use crate::*;
-use std::{ops::Range, time::Duration};
+use std::time::Duration;
 
 use based::{
     ElementState, Event, EventFlow, HostEvent, InputEvent, Key, ModifiersState, MouseButton,
@@ -54,34 +54,51 @@ pub(crate) type TextArea = Scroll<TextContent>;
 
 impl Scroll<TextContent> {
     pub fn new(content: &str, now: Instant) -> Self {
-        Self::with_child(TextContent::new(content, now))
+        Self::with_child(TextContent {
+            edit: TextEdit::new(content),
+            layout: None,
+            scroll: ScrollState::default(),
+            origin: Vec2::ZERO,
+            cursor: Vec2::ZERO,
+            selecting: false,
+            modifiers: ModifiersState::empty(),
+            last_input: now,
+            blink_phase: 0,
+            last_click: None,
+            drag_started: false,
+            hovered: false,
+        })
     }
 
     pub fn content(&self) -> String {
-        self.child().content()
+        self.child.edit.content()
     }
 
     pub fn set_rect(&mut self, rect: Rect, scale: f32) {
-        self.child_mut().set_scale(scale);
+        self.child.layout = Some(TextAreaLayout {
+            scale,
+            font_size: BASE_FONT_SIZE * scale,
+        });
         self.set_bounds(rect, 48.0 * scale);
     }
 
     pub fn control_key(&self) -> bool {
-        self.child().control_key()
+        self.child.modifiers.control_key()
     }
 
     pub fn cursor_icon(&self) -> CursorIcon {
-        self.child().cursor_icon()
+        if self.child.scroll.viewport.client.contains(self.child.cursor) {
+            CursorIcon::Text
+        } else {
+            CursorIcon::Default
+        }
     }
 }
 
 pub(crate) struct TextContent {
     edit: TextEdit,
     layout: Option<TextAreaLayout>,
-    viewport: Viewport,
-    content_height: f32,
-    reveal: Option<Range<f32>>,
-    viewport_changed: bool,
+    scroll: ScrollState,
     origin: Vec2,
     cursor: Vec2,
     selecting: bool,
@@ -94,58 +111,15 @@ pub(crate) struct TextContent {
 }
 
 impl TextContent {
-    fn new(content: &str, now: Instant) -> Self {
-        Self {
-            edit: TextEdit::new(content),
-            layout: None,
-            viewport: Viewport::default(),
-            content_height: 0.0,
-            reveal: None,
-            viewport_changed: false,
-            origin: Vec2::ZERO,
-            cursor: Vec2::ZERO,
-            selecting: false,
-            modifiers: ModifiersState::empty(),
-            last_input: now,
-            blink_phase: 0,
-            last_click: None,
-            drag_started: false,
-            hovered: false,
-        }
-    }
-
-    fn content(&self) -> String {
-        self.edit.content()
-    }
-
-    fn set_scale(&mut self, scale: f32) {
-        self.layout = Some(TextAreaLayout {
-            scale,
-            font_size: BASE_FONT_SIZE * scale,
-        });
-    }
-
-    fn control_key(&self) -> bool {
-        self.modifiers.control_key()
-    }
-
-    fn cursor_icon(&self) -> CursorIcon {
-        if self.viewport.client.contains(self.cursor) {
-            CursorIcon::Text
-        } else {
-            CursorIcon::Default
-        }
-    }
-
     fn shape(&mut self, context: &mut AppContext<'_>) -> Option<text::ShapedHandle> {
         let layout = self.layout?;
         let text_origin = Vec2::new(12.0, 11.0) * layout.scale;
         if self.edit.is_empty() {
-            self.content_height = 0.0;
-            self.origin = self.viewport.to_screen(text_origin);
+            self.scroll.content_height = 0.0;
+            self.origin = self.scroll.viewport.to_screen(text_origin);
             return None;
         }
-        let viewport = self.viewport;
+        let viewport = self.scroll.viewport;
         let content = self.edit.content();
         let mut style = context.text.style;
         style.wrap_em = Some(
@@ -155,8 +129,8 @@ impl TextContent {
         style.line_spacing = 1.18;
         let handle = context.text.raw.shape_transient(&content, &style)?;
         let height = context.text.raw.measure(handle).height_em() * layout.font_size;
-        self.content_height = height + 22.0 * layout.scale;
-        self.origin = self.viewport.to_screen(text_origin);
+        self.scroll.content_height = height + 22.0 * layout.scale;
+        self.origin = self.scroll.viewport.to_screen(text_origin);
         Some(handle)
     }
 
@@ -171,7 +145,7 @@ impl TextContent {
         };
         let handle = self.shape(context);
         if let Some(handle) = handle {
-            let viewport = self.viewport;
+            let viewport = self.scroll.viewport;
             let pointer = self.cursor;
             let point = Vec2::new(
                 pointer
@@ -226,30 +200,17 @@ impl TextContent {
         let top = 11.0 * layout.scale + caret.y_em * layout.font_size;
         let bottom = top + caret.height_em.max(1.0) * layout.font_size;
         let padding = 8.0 * layout.scale;
-        self.reveal = Some(top - padding..bottom + padding);
+        self.scroll.reveal = Some(top - padding..bottom + padding);
         self.origin = self
-            .viewport
+            .scroll.viewport
             .to_screen(Vec2::new(12.0, 11.0) * layout.scale);
     }
-
 }
 
 impl ScrollContent for TextContent {
-    fn set_viewport(&mut self, viewport: Viewport) {
-        self.viewport_changed |= self.viewport != viewport;
-        self.viewport = viewport;
-    }
-
-    fn content_height(&self) -> f32 {
-        self.content_height
-    }
-
-    fn drag_y(&self) -> Option<f32> {
-        self.selecting.then_some(self.cursor.y)
-    }
-
-    fn take_reveal(&mut self) -> Option<Range<f32>> {
-        self.reveal.take()
+    fn scroll_state(&mut self) -> (&mut ScrollState, Option<f32>) {
+        let drag_y = self.selecting.then_some(self.cursor.y);
+        (&mut self.scroll, drag_y)
     }
 }
 
@@ -268,12 +229,12 @@ impl Widget<AppContext<'_>, AppEvent> for TextContent {
             return EventFlow::NotConsumed;
         };
         if matches!(event, Event::Host(HostEvent::AboutToWait)) {
-            if self.selecting && self.viewport_changed {
+            if self.selecting && self.scroll.viewport_changed {
                 self.place_at_cursor(context, true, 1);
             }
-            self.viewport_changed = false;
+            self.scroll.viewport_changed = false;
         }
-        let client = self.viewport.client;
+        let client = self.scroll.viewport.client;
         let pointer = self.cursor;
 
         if matches!(event, Event::Host(HostEvent::RedrawRequested)) {
