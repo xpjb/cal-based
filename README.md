@@ -1,6 +1,6 @@
 # cal-based
 
-A desktop calendar experiment built from the low-level capabilities in [`based`](https://github.com/xpjb/based).
+A native and Web calendar experiment built from the low-level capabilities in [`based`](https://github.com/xpjb/based).
 
 ![Calendar](gallery/calendar.png)
 
@@ -46,7 +46,7 @@ The stored model corresponds to:
 
 Day-event memberships are rebuilt from the global event records when the file opens, so redundant paths cannot drift.
 
-The default file is under the platform's local application-data directory. Set `CAL_BASED_DATA` to use a specific JSON file.
+Native builds store the default file under the platform's local application-data directory. Set `CAL_BASED_DATA` to use a specific JSON file. Web builds currently keep calendar state in memory.
 
 ## Architecture
 
@@ -57,13 +57,13 @@ The application composes only these low-level `based` services:
 - `Sanscale`
 - `Input`
 
-Once the selected backend has a native target, one procedural initializer creates the window, GPU, text renderer, state client, and complete `App` in dependency order. The application has no partial `Runtime` state.
+Once the selected backend has a platform target, it injects the window and event sender into one asynchronous initializer. That initializer awaits the GPU, then creates the text renderer, state client, timer service, and complete `App` in dependency order. Native timers use one application-owned waiting thread; Web timers use the browser timer queue. The application has no partial `Runtime` state.
 
 Every application widget receives one concrete `AppContext`, including only `&mut dyn StateClient` for state access. Widget-scoped mirrors consume broadcast `Event::User` responses, while the backing store and event sender stay inside `App`. The desktop app shell, calendar widget, day widgets, calendar events, editor widget, settings widget, reusable interactive surfaces, and GPU painter are separate modules. Buttons own their hover and press state. Calendar cells, events, endpoints, and text fields use the same explicit idle, hovered, pressed, and dragging surface states.
 
 Rounded surfaces are single GPU quads. The fragment shader computes the radius, border, and antialias coverage, so controls do not depend on CPU polygon tessellation.
 
-The widget tree, model, transaction vocabulary, interval-lane assignment, and persistence code are not gated to one desktop OS. A later Android host can reuse the platform-neutral parts without changing calendar semantics.
+The widget tree, model, transaction vocabulary, and interval-lane assignment run unchanged on native targets and Web. Android can reuse the same application structure. Web persistence and clipboard integration remain future application services.
 
 Networking and tailnet replication are intentionally not implemented in this experiment.
 
@@ -73,6 +73,7 @@ This repository pins a private `based` revision, so the build requires repositor
 
 ```sh
 cargo run
+cargo build --target wasm32-unknown-unknown
 ./scripts/check.sh
 ./scripts/build-windows.sh
 ```

@@ -18,12 +18,16 @@ pub(crate) use settings::*;
 pub(crate) use ui::*;
 
 use crate::*;
+#[cfg(not(target_arch = "wasm32"))]
 use std::{
     env,
     path::PathBuf,
     sync::mpsc::{self, RecvTimeoutError},
     thread,
 };
+
+#[cfg(target_arch = "wasm32")]
+use gloo_timers::callback::Timeout;
 
 use based::{
     Event, EventFlow, HostEvent, Widget,
@@ -37,6 +41,7 @@ use based::{
         window::{CursorIcon, Window, WindowConfig},
     },
 };
+#[cfg(not(target_arch = "wasm32"))]
 use directories::ProjectDirs;
 
 pub(crate) type AppEvent = Event<UserEvent>;
@@ -145,7 +150,12 @@ struct App {
     renderer: Renderer,
     gpu: Wgpu,
     window: Window,
+    #[cfg(not(target_arch = "wasm32"))]
     wake: mpsc::Sender<Option<Instant>>,
+    #[cfg(target_arch = "wasm32")]
+    wake: Option<Timeout>,
+    #[cfg(target_arch = "wasm32")]
+    events: based::EventSender<UserEvent>,
 }
 
 impl App {
@@ -218,20 +228,34 @@ impl Widget<(), AppEvent> for App {
         if let Some(error) = self.gpu.take_error() {
             panic!("{error}");
         }
-        if matches!(event, Event::Host(HostEvent::AboutToWait))
-            && self.wake.send(next_wake).is_err()
-        {
-            panic!("wake timer stopped");
+        if matches!(event, Event::Host(HostEvent::AboutToWait)) {
+            #[cfg(not(target_arch = "wasm32"))]
+            if self.wake.send(next_wake).is_err() {
+                panic!("wake timer stopped");
+            }
+            #[cfg(target_arch = "wasm32")]
+            {
+                self.wake = next_wake.map(|instant| {
+                    let delay = instant.saturating_duration_since(Instant::now());
+                    let milliseconds = delay.as_millis().min(u32::MAX as u128) as u32;
+                    let events = self.events.clone();
+                    Timeout::new(milliseconds, move || {
+                        let _ = events.send(Event::User(UserEvent::Timer));
+                    })
+                });
+            }
         }
         flow
     }
 }
 
 pub fn run() -> Result<(), String> {
+    #[cfg(not(target_arch = "wasm32"))]
     let data_path = env::var_os("CAL_BASED_DATA").map(PathBuf::from).or_else(|| {
         ProjectDirs::from("dev", "xpjb", "cal-based")
             .map(|directories| directories.data_local_dir().join("calendar.json"))
     });
+    #[cfg(not(target_arch = "wasm32"))]
     let data_path = data_path
         .ok_or_else(|| "Local data directory is unavailable".to_owned())?;
     winit::run(
@@ -241,15 +265,20 @@ pub fn run() -> Result<(), String> {
             visible: false,
             ..Default::default()
         },
-        move |window, events| {
+        move |window, events| async move {
             window.set_min_inner_size(Some(UVec2::new(720, 520)));
             window.set_ime_allowed(false);
-            let gpu = pollster::block_on(Wgpu::new(&window, WgpuConfig::default()))?;
+            let gpu = Wgpu::new(&window, WgpuConfig::default()).await?;
             let text = Sanscale::from_static(&gpu, include_bytes!("../../assets/Roboto.ttf"))?;
+            #[cfg(not(target_arch = "wasm32"))]
             let state = CalendarState::open(&data_path, events.clone())
                 .map_err(|error| error.to_string())?;
+            #[cfg(target_arch = "wasm32")]
+            let state = CalendarState::memory(events.clone());
             let renderer = Renderer::new(&gpu);
+            #[cfg(not(target_arch = "wasm32"))]
             let (wake, wake_requests) = mpsc::channel::<Option<Instant>>();
+            #[cfg(not(target_arch = "wasm32"))]
             thread::spawn(move || {
                 let mut deadline: Option<Instant> = None;
                 loop {
@@ -281,7 +310,12 @@ pub fn run() -> Result<(), String> {
                 renderer,
                 gpu,
                 window,
+                #[cfg(not(target_arch = "wasm32"))]
                 wake,
+                #[cfg(target_arch = "wasm32")]
+                wake: None,
+                #[cfg(target_arch = "wasm32")]
+                events,
             })
         },
     )

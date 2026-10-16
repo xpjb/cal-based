@@ -337,7 +337,7 @@ pub enum UserEvent {
 
 pub struct CalendarState {
     data: CalendarData,
-    path: PathBuf,
+    path: Option<PathBuf>,
     next_request_id: RequestId,
     events: EventSender<UserEvent>,
 }
@@ -373,10 +373,19 @@ impl CalendarState {
         }
         Ok(Self {
             data,
-            path,
+            path: Some(path),
             next_request_id: 1,
             events,
         })
+    }
+
+    pub fn memory(events: EventSender<UserEvent>) -> Self {
+        Self {
+            data: CalendarData::default(),
+            path: None,
+            next_request_id: 1,
+            events,
+        }
     }
 
     fn next_request(&mut self) -> Result<RequestId, StateError> {
@@ -432,13 +441,15 @@ impl StateClient for CalendarState {
             .collect();
         let mut next = self.data.clone();
         next.apply_transactions(&operations)?;
-        if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent)
+        if let Some(path) = &self.path {
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent)
+                    .map_err(|error| StateError::Write(error.to_string()))?;
+            }
+            let bytes = serde_json::to_vec_pretty(&next)
                 .map_err(|error| StateError::Write(error.to_string()))?;
+            fs::write(path, bytes).map_err(|error| StateError::Write(error.to_string()))?;
         }
-        let bytes = serde_json::to_vec_pretty(&next)
-            .map_err(|error| StateError::Write(error.to_string()))?;
-        fs::write(&self.path, bytes).map_err(|error| StateError::Write(error.to_string()))?;
         self.data = next;
         for key in keys {
             self.send_value(request_id, key);
