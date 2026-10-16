@@ -329,23 +329,17 @@ pub enum StateEvent {
     },
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum UserEvent {
-    State(StateEvent),
-    Timer,
-}
-
 pub struct CalendarState {
     data: CalendarData,
     path: Option<PathBuf>,
     next_request_id: RequestId,
-    events: EventSender<UserEvent>,
+    events: EventSender<StateEvent>,
 }
 
 impl CalendarState {
     pub fn open(
         path: impl Into<PathBuf>,
-        events: EventSender<UserEvent>,
+        events: EventSender<StateEvent>,
     ) -> Result<Self, StateError> {
         let path = path.into();
         let mut data = if path.exists() {
@@ -379,7 +373,7 @@ impl CalendarState {
         })
     }
 
-    pub fn memory(events: EventSender<UserEvent>) -> Self {
+    pub fn memory(events: EventSender<StateEvent>) -> Self {
         Self {
             data: CalendarData::default(),
             path: None,
@@ -403,11 +397,11 @@ impl CalendarState {
             CalendarKey::Event(id) => CalendarValue::Event(self.data.events.get(&id).cloned()),
             CalendarKey::Settings => CalendarValue::Settings(self.data.settings.clone()),
         };
-        let _ = self.events.send(Event::User(UserEvent::State(StateEvent::Value {
+        let _ = self.events.send(Event::User(StateEvent::Value {
             request_id,
             key,
             result: Ok(value),
-        })));
+        }));
     }
 }
 
@@ -490,12 +484,12 @@ mod tests {
         NaiveDate::from_ymd_opt(2026, 10, day).unwrap()
     }
 
-    fn state_events() -> (EventSender<UserEvent>, Arc<Mutex<Vec<StateEvent>>>) {
+    fn state_events() -> (EventSender<StateEvent>, Arc<Mutex<Vec<StateEvent>>>) {
         let events = Arc::new(Mutex::new(Vec::new()));
         let captured = events.clone();
         let sender = EventSender::new(move |event| {
-            let Event::User(UserEvent::State(event)) = event else {
-                panic!("unexpected non-state event");
+            let Event::User(event) = event else {
+                panic!("unexpected non-user event");
             };
             captured.lock().unwrap().push(event);
             Ok(())

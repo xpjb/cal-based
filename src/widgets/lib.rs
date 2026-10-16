@@ -19,18 +19,10 @@ pub(crate) use ui::*;
 
 use crate::*;
 #[cfg(not(target_arch = "wasm32"))]
-use std::{
-    env,
-    path::PathBuf,
-    sync::mpsc::{self, RecvTimeoutError},
-    thread,
-};
-
-#[cfg(target_arch = "wasm32")]
-use gloo_timers::callback::Timeout;
+use std::{env, path::PathBuf};
 
 use based::{
-    Event, EventFlow, HostEvent, Widget,
+    Event, EventFlow, HostEvent, Wake, Widget,
     backend::winit,
     glam::{UVec2, Vec2, Vec4},
     web_time::Instant,
@@ -44,7 +36,7 @@ use based::{
 #[cfg(not(target_arch = "wasm32"))]
 use directories::ProjectDirs;
 
-pub(crate) type AppEvent = Event<UserEvent>;
+pub(crate) type AppEvent = Event<StateEvent>;
 
 pub(crate) struct AppContext<'a> {
     window: &'a Window,
@@ -150,12 +142,7 @@ struct App {
     renderer: Renderer,
     gpu: Wgpu,
     window: Window,
-    #[cfg(not(target_arch = "wasm32"))]
-    wake: mpsc::Sender<Option<Instant>>,
-    #[cfg(target_arch = "wasm32")]
-    wake: Option<Timeout>,
-    #[cfg(target_arch = "wasm32")]
-    events: based::EventSender<UserEvent>,
+    wake: Wake,
 }
 
 impl App {
@@ -228,22 +215,11 @@ impl Widget<(), AppEvent> for App {
         if let Some(error) = self.gpu.take_error() {
             panic!("{error}");
         }
-        if matches!(event, Event::Host(HostEvent::AboutToWait)) {
-            #[cfg(not(target_arch = "wasm32"))]
-            if self.wake.send(next_wake).is_err() {
-                panic!("wake timer stopped");
-            }
-            #[cfg(target_arch = "wasm32")]
-            {
-                self.wake = next_wake.map(|instant| {
-                    let delay = instant.saturating_duration_since(Instant::now());
-                    let milliseconds = delay.as_millis().min(u32::MAX as u128) as u32;
-                    let events = self.events.clone();
-                    Timeout::new(milliseconds, move || {
-                        let _ = events.send(Event::User(UserEvent::Timer));
-                    })
-                });
-            }
+        if matches!(event, Event::Host(HostEvent::AboutToWait))
+            && let Some(instant) = next_wake
+        {
+            self.wake
+                .after(instant.saturating_duration_since(Instant::now()));
         }
         flow
     }
@@ -265,7 +241,7 @@ pub fn run() -> Result<(), String> {
             visible: false,
             ..Default::default()
         },
-        move |window, events| async move {
+        move |window, events, wake| async move {
             window.set_min_inner_size(Some(UVec2::new(720, 520)));
             window.set_ime_allowed(false);
             let gpu = Wgpu::new(&window, WgpuConfig::default()).await?;
@@ -276,32 +252,6 @@ pub fn run() -> Result<(), String> {
             #[cfg(target_arch = "wasm32")]
             let state = CalendarState::memory(events.clone());
             let renderer = Renderer::new(&gpu);
-            #[cfg(not(target_arch = "wasm32"))]
-            let (wake, wake_requests) = mpsc::channel::<Option<Instant>>();
-            #[cfg(not(target_arch = "wasm32"))]
-            thread::spawn(move || {
-                let mut deadline: Option<Instant> = None;
-                loop {
-                    match deadline {
-                        Some(instant) => {
-                            match wake_requests.recv_timeout(
-                                instant.saturating_duration_since(Instant::now()),
-                            ) {
-                                Ok(next) => deadline = next,
-                                Err(RecvTimeoutError::Timeout) => {
-                                    let _ = events.send(Event::User(UserEvent::Timer));
-                                    deadline = None;
-                                }
-                                Err(RecvTimeoutError::Disconnected) => break,
-                            }
-                        }
-                        None => match wake_requests.recv() {
-                            Ok(next) => deadline = next,
-                            Err(_) => break,
-                        },
-                    }
-                }
-            });
             Ok(App {
                 calendar: CalendarWidget::new(),
                 state,
@@ -310,12 +260,7 @@ pub fn run() -> Result<(), String> {
                 renderer,
                 gpu,
                 window,
-                #[cfg(not(target_arch = "wasm32"))]
                 wake,
-                #[cfg(target_arch = "wasm32")]
-                wake: None,
-                #[cfg(target_arch = "wasm32")]
-                events,
             })
         },
     )
