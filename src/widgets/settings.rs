@@ -6,19 +6,24 @@ use based::{
 };
 
 const PANEL_BG: Vec4 = Vec4::new(0.075, 0.088, 0.108, 1.0);
-const ROW_STYLE: SurfaceStyle = SurfaceStyle {
-    fill: StateColors::new(
-        Vec4::new(0.045, 0.054, 0.068, 1.0),
-        Vec4::new(0.065, 0.082, 0.105, 1.0),
-        Vec4::new(0.035, 0.045, 0.060, 1.0),
-        Vec4::new(0.075, 0.105, 0.145, 1.0),
-    ),
-    border: StateColors::new(
-        GRID,
-        Vec4::new(0.28, 0.39, 0.52, 1.0),
-        Vec4::new(0.34, 0.52, 0.72, 1.0),
-        ACCENT,
-    ),
+const ROW_BUTTON: ButtonStyle = ButtonStyle {
+    surface: SurfaceStyle {
+        fill: StateColors::new(
+            Vec4::new(0.045, 0.054, 0.068, 1.0),
+            Vec4::new(0.065, 0.082, 0.105, 1.0),
+            Vec4::new(0.035, 0.045, 0.060, 1.0),
+            Vec4::new(0.075, 0.105, 0.145, 1.0),
+        ),
+        border: StateColors::new(
+            GRID,
+            Vec4::new(0.28, 0.39, 0.52, 1.0),
+            Vec4::new(0.34, 0.52, 0.72, 1.0),
+            ACCENT,
+        ),
+    },
+    text: TEXT,
+    radius: 7.0,
+    border_width: 1.0,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -77,20 +82,35 @@ impl DayColorSlot {
 
 struct DayColorRow(DayColorSlot);
 
-impl ButtonFace<(DayColors, DayColorSlot)> for DayColorRow {
-    fn redraw(&mut self, context: &mut AppContext<'_>, rect: Rect, state: SurfaceState,
-        (colors, selected): (DayColors, DayColorSlot)) {
-        let scale = context.scale;
-        let state = if self.0 == selected { SurfaceState::Dragging } else { state };
-        paint_surface(context, rect, 7.0 * scale, scale, state, ROW_STYLE);
-        let _ = context.text(self.0.label(), rect.inset(12.0 * scale), 13.5 * scale, TEXT,
-            HorizontalAlign::Left, VerticalAlign::Center, false);
-        let chip = Rect::new(rect.right() - 50.0 * scale, rect.position.y + 8.0 * scale,
-            38.0 * scale, rect.size.y - 16.0 * scale);
-        context.surface(chip, 6.0 * scale,
+impl Widget<ViewContext<'_, '_, (DayColors, DayColorSlot)>, AppEvent> for DayColorRow {
+    fn handle_event(
+        &mut self,
+        context: &mut ViewContext<'_, '_, (DayColors, DayColorSlot)>,
+        _event: &AppEvent,
+    ) -> EventFlow {
+        let rect = context.rect;
+        let (colors, selected) = context.data;
+        let scale = context.app.scale;
+        if self.0 == selected {
+            paint_surface(context.app, rect, ROW_BUTTON.radius * scale,
+                ROW_BUTTON.border_width * scale, SurfaceState::Dragging, ROW_BUTTON.surface);
+        }
+        Label::new(self.0.label(), 13.5, ROW_BUTTON.text)
+            .paint(context.app, rect.inset(12.0 * scale));
+        let chip = Rect::new(
+            rect.right() - 50.0 * scale,
+            rect.position.y + 8.0 * scale,
+            38.0 * scale,
+            rect.size.y - 16.0 * scale,
+        );
+        context.app.surface(
+            chip,
+            6.0 * scale,
             if self.0 == selected { 2.0 * scale } else { scale },
             Vec4::from_array(self.0.color(colors).rgba()),
-            if self.0 == selected { ACCENT } else { GRID });
+            if self.0 == selected { ACCENT } else { GRID },
+        );
+        EventFlow::NotConsumed
     }
 }
 
@@ -120,8 +140,8 @@ pub struct SettingsWidget {
     cursor: Vec2,
     picker: Option<(u64, PickerTarget)>,
     rows: [Button<DayColorRow>; 6],
-    reset_button: Button<TextButton>,
-    done_button: Button<TextButton>,
+    reset_button: Button<Label<&'static str>>,
+    done_button: Button<Label<&'static str>>,
     error: Option<String>,
 }
 
@@ -136,9 +156,11 @@ impl SettingsWidget {
             layout: None,
             cursor: Vec2::ZERO,
             picker: None,
-            rows: DayColorSlot::ALL.map(|slot| Button::new(DayColorRow(slot))),
-            reset_button: Button::text("Reset", 13.0, NEUTRAL_BUTTON),
-            done_button: Button::text("Done", 13.0, PRIMARY_BUTTON),
+            rows: DayColorSlot::ALL.map(|slot| Button::new(DayColorRow(slot), ROW_BUTTON)),
+            reset_button: Button::new(
+                Label::centered("Reset", 13.0, NEUTRAL_BUTTON.text), NEUTRAL_BUTTON),
+            done_button: Button::new(
+                Label::centered("Done", 13.0, PRIMARY_BUTTON.text), PRIMARY_BUTTON),
             error: None,
         }
     }
@@ -349,19 +371,14 @@ impl Widget<AppContext<'_>, AppEvent> for SettingsWidget {
                 PANEL_BG,
                 Vec4::new(0.30, 0.35, 0.42, 1.0),
             );
-            let _ = context.text(
-                "Day colors",
+            Label::new("Day colors", 22.0, TEXT).paint(
+                context,
                 Rect::new(
                     panel.position.x + padding,
                     panel.position.y + 18.0 * scale,
                     panel.size.x - padding * 2.0,
                     38.0 * scale,
                 ),
-                22.0 * scale,
-                TEXT,
-                HorizontalAlign::Left,
-                VerticalAlign::Center,
-                false,
             );
 
             for (button, rect) in self.rows.iter_mut().zip(rows) {
@@ -453,34 +470,24 @@ impl Widget<AppContext<'_>, AppEvent> for SettingsWidget {
                 selected_color.g,
                 selected_color.b,
             );
-            let _ = context.text(
-                &value,
+            Label::new(&value, 13.0, MUTED).paint(
+                context,
                 Rect::new(
                     picker_x,
                     hue.bottom() + 14.0 * scale,
                     picker_size,
                     26.0 * scale,
                 ),
-                13.0 * scale,
-                MUTED,
-                HorizontalAlign::Left,
-                VerticalAlign::Center,
-                false,
             );
             if let Some(error) = &self.error {
-                let _ = context.text(
-                    error,
+                Label::new(error, 12.5, Vec4::new(1.0, 0.55, 0.58, 1.0)).paint(
+                    context,
                     Rect::new(
                         panel.position.x + padding,
                         done.position.y,
                         reset.position.x - panel.position.x - padding * 2.0,
                         done.size.y,
                     ),
-                    12.5 * scale,
-                    Vec4::new(1.0, 0.55, 0.58, 1.0),
-                    HorizontalAlign::Left,
-                    VerticalAlign::Center,
-                    false,
                 );
             }
             let _ = self.reset_button.handle_event(context, event, reset, ());

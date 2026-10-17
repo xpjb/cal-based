@@ -119,8 +119,8 @@ pub struct CalendarWidget {
     pointer: PointerState,
     cursor: Vec2,
     hits: HitMap,
-    today_button: Button<TextButton>,
-    settings_button: Button<TextButton>,
+    today_button: Button<Label<&'static str>>,
+    settings_button: Button<Label<&'static str>>,
     settings: SettingsWidget,
     editor: EditorWidget,
 }
@@ -141,8 +141,10 @@ impl CalendarWidget {
             pointer: PointerState::Idle,
             cursor: Vec2::ZERO,
             hits: HitMap::default(),
-            today_button: Button::text("Today", 14.0, PRIMARY_BUTTON),
-            settings_button: Button::text("Settings", 14.0, NEUTRAL_BUTTON),
+            today_button: Button::new(
+                Label::centered("Today", 14.0, PRIMARY_BUTTON.text), PRIMARY_BUTTON),
+            settings_button: Button::new(
+                Label::centered("Settings", 14.0, NEUTRAL_BUTTON.text), NEUTRAL_BUTTON),
             settings: SettingsWidget::new(),
             editor: EditorWidget::new(),
         }
@@ -771,14 +773,19 @@ impl Widget<AppContext<'_>, AppEvent> for CalendarWidget {
                 .into_iter()
                 .enumerate()
             {
-                let _ = context.text(
+                Label::centered(
                     weekday,
-                    Rect::new(column as f32 * cell_width, header_height, cell_width, weekday_height),
-                    13.0 * scale,
+                    13.0,
                     if column == 0 || column == 6 { MUTED } else { TEXT },
-                    HorizontalAlign::Center,
-                    VerticalAlign::Center,
-                    false,
+                )
+                .paint(
+                    context,
+                    Rect::new(
+                        column as f32 * cell_width,
+                        header_height,
+                        cell_width,
+                        weekday_height,
+                    ),
                 );
             }
 
@@ -798,29 +805,24 @@ impl Widget<AppContext<'_>, AppEvent> for CalendarWidget {
                 .checked_add_days(Days::new(3))
                 .unwrap_or(title_week);
             let month_title = title_date.format("%B %Y").to_string();
-            let _ = context.text(
-                &month_title,
+            Label::new(&month_title, 22.0, TEXT).paint(
+                context,
                 Rect::new(20.0 * scale, 11.0 * scale, 320.0 * scale, 42.0 * scale),
-                22.0 * scale,
-                TEXT,
-                HorizontalAlign::Left,
-                VerticalAlign::Center,
-                false,
             );
             if let Some(error) = &self.last_error {
-                let _ = context.text(
-                    &error.to_string(),
+                Label::new(
+                    error.to_string(),
+                    12.5,
+                    Vec4::new(1.0, 0.55, 0.58, 1.0),
+                )
+                .paint(
+                    context,
                     Rect::new(
                         360.0 * scale,
                         11.0 * scale,
                         (settings_button.position.x - 380.0 * scale).max(0.0),
                         42.0 * scale,
                     ),
-                    12.5 * scale,
-                    Vec4::new(1.0, 0.55, 0.58, 1.0),
-                    HorizontalAlign::Left,
-                    VerticalAlign::Center,
-                    false,
                 );
             }
             let _ = self.settings_button.handle_event(context, event, settings_button, ());

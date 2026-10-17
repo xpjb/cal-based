@@ -16,6 +16,12 @@ pub enum SurfaceState {
     Dragging,
 }
 
+pub struct ViewContext<'a, 'b, D> {
+    pub app: &'a mut AppContext<'b>,
+    pub rect: Rect,
+    pub data: D,
+}
+
 #[derive(Clone, Copy)]
 pub struct StateColors {
     pub idle: Vec4,

@@ -295,15 +295,13 @@ impl Widget<AppContext<'_>, AppEvent> for TextContent {
                     context.quad(caret_rect, Vec4::new(0.95, 0.97, 1.0, 1.0));
                 }
             } else {
-                context.text(
+                Label::new(
                     "Write something…",
-                    client.inset(12.0 * layout.scale),
-                    layout.font_size,
+                    BASE_FONT_SIZE,
                     Vec4::new(0.34, 0.38, 0.44, 1.0),
-                    HorizontalAlign::Left,
-                    VerticalAlign::Top,
-                    false,
-                );
+                )
+                .top(false)
+                .paint(context, client.inset(12.0 * layout.scale));
                 let phase = context.now.duration_since(self.last_input).as_millis() as u64
                     / CARET_PERIOD.as_millis() as u64;
                 if phase.is_multiple_of(2) {

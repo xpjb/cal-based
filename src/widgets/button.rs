@@ -1,6 +1,6 @@
 use crate::*;
 use based::{
-    ElementState, Event, EventFlow, HostEvent, InputEvent, Key, NamedKey, TouchPhase,
+    ElementState, Event, EventFlow, HostEvent, InputEvent, Key, NamedKey, TouchPhase, Widget,
     glam::Vec4,
 };
 
@@ -72,35 +72,16 @@ pub const DANGER_BUTTON: ButtonStyle = ButtonStyle {
     border_width: 1.0,
 };
 
-pub trait ButtonFace<D> {
-    fn redraw(&mut self, context: &mut AppContext<'_>, rect: Rect, state: SurfaceState, data: D);
-}
-
-pub struct TextButton {
-    label: &'static str,
-    size: f32,
-    style: ButtonStyle,
-}
-
-impl ButtonFace<()> for TextButton {
-    fn redraw(&mut self, context: &mut AppContext<'_>, rect: Rect, state: SurfaceState, (): ()) {
-        let scale = context.scale;
-        paint_surface(context, rect, self.style.radius * scale, self.style.border_width * scale,
-            state, self.style.surface);
-        let _ = context.text(self.label, rect, self.size * scale, self.style.text,
-            HorizontalAlign::Center, VerticalAlign::Center, false);
-    }
-}
-
 pub struct Button<W> {
-    face: W,
+    child: W,
+    style: ButtonStyle,
     hovered: bool,
     active: Option<(u64, bool)>,
 }
 
 impl<W> Button<W> {
-    pub const fn new(face: W) -> Self {
-        Self { face, hovered: false, active: None }
+    pub const fn new(child: W, style: ButtonStyle) -> Self {
+        Self { child, style, hovered: false, active: None }
     }
 
     fn state(&self) -> SurfaceState {
@@ -123,15 +104,23 @@ impl<W> Button<W> {
         rect: Rect,
         data: D,
     ) -> (EventFlow, bool)
-    where W: ButtonFace<D>
+    where
+        for<'a, 'b> W: Widget<ViewContext<'a, 'b, D>, AppEvent>,
     {
         let before = self.state();
         if matches!(event, Event::Host(HostEvent::RedrawRequested)) {
             if self.active.is_none() {
                 self.hovered = context.input.pointer().is_some_and(|point| rect.contains(point));
             }
-            self.face.redraw(context, rect, self.state(), data);
-            return (EventFlow::NotConsumed, false);
+            let scale = context.scale;
+            paint_surface(context, rect, self.style.radius * scale,
+                self.style.border_width * scale, self.state(), self.style.surface);
+            let mut child_context = ViewContext {
+                app: context,
+                rect,
+                data,
+            };
+            return (self.child.handle_event(&mut child_context, event), false);
         }
         let cancelled = match event {
             Event::Host(HostEvent::Focused { focused: false }) => {
@@ -186,11 +175,5 @@ impl<W> Button<W> {
             context.window.request_redraw();
         }
         (match consumed { true => EventFlow::Consumed, false => EventFlow::NotConsumed }, activated)
-    }
-}
-
-impl Button<TextButton> {
-    pub const fn text(label: &'static str, size: f32, style: ButtonStyle) -> Self {
-        Self::new(TextButton { label, size, style })
     }
 }

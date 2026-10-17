@@ -201,7 +201,7 @@ impl FrameCanvas {
         }
     }
 
-    pub fn text(
+    pub(super) fn text(
         &mut self,
         service: &mut Sanscale,
         content: &str,
@@ -211,9 +211,9 @@ impl FrameCanvas {
         horizontal: HorizontalAlign,
         vertical: VerticalAlign,
         wrap: bool,
-    ) -> bool {
+    ) {
         if content.is_empty() || rect.size.x <= 0.0 || rect.size.y <= 0.0 || size <= 0.0 {
-            return false;
+            return;
         }
         let mut style = service.style;
         style.wrap_em = wrap.then_some((rect.size.x / size).max(1.0));
@@ -226,7 +226,7 @@ impl FrameCanvas {
             text::Align::Left
         };
         let Some(handle) = service.raw.shape_transient(content, &style) else {
-            return false;
+            return;
         };
         let layout = service.raw.measure(handle);
         let extent = Vec2::new(layout.width_em(), layout.height_em()) * size;
@@ -256,7 +256,6 @@ impl FrameCanvas {
             )),
             ..Default::default()
         }));
-        true
     }
 
     pub fn draw_text(

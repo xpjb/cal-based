@@ -37,9 +37,9 @@ pub struct EditorWidget {
     session: Option<Session>,
     layout: Option<EditorLayout>,
     cursor: Vec2,
-    save_button: Button<TextButton>,
-    cancel_button: Button<TextButton>,
-    delete_button: Button<TextButton>,
+    save_button: Button<Label<&'static str>>,
+    cancel_button: Button<Label<&'static str>>,
+    delete_button: Button<Label<&'static str>>,
 }
 
 impl EditorWidget {
@@ -48,9 +48,12 @@ impl EditorWidget {
             session: None,
             layout: None,
             cursor: Vec2::ZERO,
-            save_button: Button::text("Save", 13.0, PRIMARY_BUTTON),
-            cancel_button: Button::text("Cancel", 13.0, NEUTRAL_BUTTON),
-            delete_button: Button::text("Delete", 13.0, DANGER_BUTTON),
+            save_button: Button::new(
+                Label::centered("Save", 13.0, PRIMARY_BUTTON.text), PRIMARY_BUTTON),
+            cancel_button: Button::new(
+                Label::centered("Cancel", 13.0, NEUTRAL_BUTTON.text), NEUTRAL_BUTTON),
+            delete_button: Button::new(
+                Label::centered("Delete", 13.0, DANGER_BUTTON.text), DANGER_BUTTON),
         }
     }
 
@@ -214,33 +217,23 @@ impl Widget<AppContext<'_>, AppEvent> for EditorWidget {
                     },
                 ),
             };
-            let _ = context.text(
-                title,
+            Label::new(title, 22.0, TEXT).paint(
+                context,
                 Rect::new(
                     panel.position.x + 24.0 * scale,
                     panel.position.y + 18.0 * scale,
                     panel.size.x - 48.0 * scale,
                     36.0 * scale,
                 ),
-                22.0 * scale,
-                TEXT,
-                HorizontalAlign::Left,
-                VerticalAlign::Center,
-                false,
             );
-            let _ = context.text(
-                &subtitle,
+            Label::new(&subtitle, 14.0, ACCENT).paint(
+                context,
                 Rect::new(
                     panel.position.x + 24.0 * scale,
                     panel.position.y + 60.0 * scale,
                     panel.size.x - 48.0 * scale,
                     28.0 * scale,
                 ),
-                14.0 * scale,
-                ACCENT,
-                HorizontalAlign::Left,
-                VerticalAlign::Center,
-                false,
             );
 
             if let Some(session) = &mut self.session {
@@ -259,15 +252,8 @@ impl Widget<AppContext<'_>, AppEvent> for EditorWidget {
                 .as_ref()
                 .and_then(|session| session.error.as_deref())
             {
-                let _ = context.text(
-                    error,
-                    footer,
-                    12.5 * scale,
-                    Vec4::new(1.0, 0.55, 0.58, 1.0),
-                    HorizontalAlign::Left,
-                    VerticalAlign::Center,
-                    false,
-                );
+                Label::new(error, 12.5, Vec4::new(1.0, 0.55, 0.58, 1.0))
+                    .paint(context, footer);
             }
 
             let _ = self.cancel_button.handle_event(context, event, cancel, ());

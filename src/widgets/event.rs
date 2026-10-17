@@ -217,15 +217,8 @@ impl EventStrip {
             return;
         }
         let description = self.description.lines().next().unwrap_or("");
-        let _ = context.text(
-            description,
-            self.rect.inset(4.0 * scale),
-            13.5 * scale,
-            Vec4::ONE,
-            HorizontalAlign::Center,
-            VerticalAlign::Center,
-            false,
-        );
+        Label::centered(description, 13.5, Vec4::ONE)
+            .paint(context, self.rect.inset(4.0 * scale));
     }
 }
 

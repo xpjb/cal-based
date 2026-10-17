@@ -4,6 +4,7 @@ mod day;
 mod editor;
 mod event;
 mod input;
+mod label;
 mod paint;
 mod sanscale;
 mod scroll;
@@ -18,6 +19,7 @@ pub use day::*;
 pub use editor::*;
 pub use event::*;
 pub use input::*;
+pub use label::*;
 pub use paint::*;
 pub use sanscale::*;
 pub use scroll::*;
@@ -120,30 +122,6 @@ impl AppContext<'_> {
         if let Some(frame) = self.frame.as_deref_mut() {
             frame.gradient(rect, colors);
         }
-    }
-
-    fn text(
-        &mut self,
-        content: &str,
-        rect: Rect,
-        size: f32,
-        color: Vec4,
-        horizontal: HorizontalAlign,
-        vertical: VerticalAlign,
-        wrap: bool,
-    ) -> bool {
-        self.frame.as_deref_mut().is_some_and(|frame| {
-            frame.text(
-                self.text,
-                content,
-                rect,
-                size,
-                color,
-                horizontal,
-                vertical,
-                wrap,
-            )
-        })
     }
 
     fn draw_text(

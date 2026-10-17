@@ -120,55 +120,47 @@ impl DayWidget {
         today: NaiveDate,
         scale: f32,
     ) {
-        let _ = context.text(
-            &self.date.day().to_string(),
+        Label::centered(
+            self.date.day().to_string(),
+            18.0,
+            if self.date == today { BACKGROUND } else { TEXT },
+        )
+        .paint(
+            context,
             Rect::new(
                 cell.position.x + 8.0 * scale,
                 cell.position.y + 8.0 * scale,
                 36.0 * scale,
                 34.0 * scale,
             ),
-            18.0 * scale,
-            if self.date == today { BACKGROUND } else { TEXT },
-            HorizontalAlign::Center,
-            VerticalAlign::Center,
-            false,
         );
         if self.date.day() == 1 || self.date.weekday() == Weekday::Sun {
             let month = self.date.format("%b").to_string().to_uppercase();
-            let _ = context.text(
-                &month,
+            Label::new(month, 12.5, MUTED).paint(
+                context,
                 Rect::new(
                     cell.position.x + 50.0 * scale,
                     cell.position.y + 10.0 * scale,
                     cell.size.x - 58.0 * scale,
                     28.0 * scale,
                 ),
-                12.5 * scale,
-                MUTED,
-                HorizontalAlign::Left,
-                VerticalAlign::Center,
-                false,
             );
         }
         let Some(description) = self.description().filter(|description| !description.is_empty())
         else {
             return;
         };
-        let _ = context.text(
-            description,
-            Rect::new(
-                cell.position.x + 9.0 * scale,
-                cell.position.y + 48.0 * scale,
-                cell.size.x - 18.0 * scale,
-                (cell.size.y - 158.0 * scale).max(22.0 * scale),
-            ),
-            14.0 * scale,
-            Vec4::new(0.73, 0.77, 0.82, 1.0),
-            HorizontalAlign::Left,
-            VerticalAlign::Top,
-            true,
-        );
+        Label::new(description, 14.0, Vec4::new(0.73, 0.77, 0.82, 1.0))
+            .top(true)
+            .paint(
+                context,
+                Rect::new(
+                    cell.position.x + 9.0 * scale,
+                    cell.position.y + 48.0 * scale,
+                    cell.size.x - 18.0 * scale,
+                    (cell.size.y - 158.0 * scale).max(22.0 * scale),
+                ),
+            );
     }
 }
 
