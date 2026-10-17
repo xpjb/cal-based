@@ -40,6 +40,8 @@ pub struct CalendarEvent {
     pub end_date: NaiveDate,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub description: String,
+    #[serde(skip)]
+    pub draft: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -141,6 +143,7 @@ impl CalendarData {
                         start_date: *start_date,
                         end_date: *end_date,
                         description: description.clone(),
+                        draft: false,
                     };
                     next.add_memberships(&event);
                     next.events.insert(*id, event);
@@ -648,18 +651,21 @@ mod tests {
                 start_date: date(10),
                 end_date: date(13),
                 description: String::new(),
+                draft: false,
             },
             CalendarEvent {
                 id: Uuid::from_u128(2),
                 start_date: date(11),
                 end_date: date(11),
                 description: String::new(),
+                draft: false,
             },
             CalendarEvent {
                 id: Uuid::from_u128(3),
                 start_date: date(14),
                 end_date: date(14),
                 description: String::new(),
+                draft: false,
             },
         ];
         let lanes = assign_event_lanes(&events);

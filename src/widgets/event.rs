@@ -5,6 +5,7 @@ use chrono::{Days, NaiveDate};
 use uuid::Uuid;
 
 const MAX_LANES: usize = 4;
+const DRAFT_ID: EventId = Uuid::from_u128(u128::MAX);
 const HANDLE_SURFACE: SurfaceStyle = SurfaceStyle {
     fill: StateColors::new(
         Vec4::new(1.0, 1.0, 1.0, 0.30),
@@ -42,18 +43,10 @@ pub struct EventHit {
     pub endpoint: Option<(Endpoint, NaiveDate)>,
 }
 
-pub struct EventVisual {
-    pub id: EventId,
-    pub start_date: NaiveDate,
-    pub end_date: NaiveDate,
-    pub description: String,
-    pub draft: bool,
-}
-
-impl EventVisual {
-    pub fn draft(start_date: NaiveDate, end_date: NaiveDate) -> Self {
+impl CalendarEvent {
+    pub(crate) fn draft(start_date: NaiveDate, end_date: NaiveDate) -> Self {
         Self {
-            id: Uuid::from_u128(u128::MAX),
+            id: DRAFT_ID,
             start_date,
             end_date,
             description: String::new(),
@@ -61,16 +54,7 @@ impl EventVisual {
         }
     }
 
-    pub fn calendar_event(&self) -> CalendarEvent {
-        CalendarEvent {
-            id: self.id,
-            start_date: self.start_date,
-            end_date: self.end_date,
-            description: self.description.clone(),
-        }
-    }
-
-    pub fn append_strips(
+    pub(crate) fn append_strips(
         &self,
         strips: &mut Vec<EventStrip>,
         weeks: &[WeekVisual],
@@ -242,18 +226,6 @@ impl EventStrip {
             VerticalAlign::Center,
             false,
         );
-    }
-}
-
-impl From<&CalendarEvent> for EventVisual {
-    fn from(event: &CalendarEvent) -> Self {
-        Self {
-            id: event.id,
-            start_date: event.start_date,
-            end_date: event.end_date,
-            description: event.description.clone(),
-            draft: false,
-        }
     }
 }
 

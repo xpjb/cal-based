@@ -615,16 +615,16 @@ impl Widget<AppContext<'_>, AppEvent> for CalendarWidget {
                     self.last_error = Some(error);
                 }
             }
-            let mut visual_events: Vec<EventVisual> = self
+            let mut visual_events: Vec<CalendarEvent> = self
                 .events
                 .values()
-                .map(EventVisual::from)
                 .filter(|event| {
                     event.start_date <= interest_end && event.end_date >= interest_start
                 })
+                .cloned()
                 .collect();
             if let PointerState::Creating { origin, current, .. } = self.pointer {
-                visual_events.push(EventVisual::draft(origin.min(current), origin.max(current)));
+                visual_events.push(CalendarEvent::draft(origin.min(current), origin.max(current)));
             }
             if let PointerState::Resizing {
                 id,
@@ -645,11 +645,7 @@ impl Widget<AppContext<'_>, AppEvent> for CalendarWidget {
                     event.draft = true;
                 }
             }
-            let lane_events: Vec<_> = visual_events
-                .iter()
-                .map(EventVisual::calendar_event)
-                .collect();
-            let lanes = assign_event_lanes(&lane_events);
+            let lanes = assign_event_lanes(&visual_events);
             let mut strips = Vec::new();
             for event in &visual_events {
                 let lane = lanes.get(&event.id).copied().unwrap_or(0);
