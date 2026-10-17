@@ -109,95 +109,6 @@ pub struct CalendarData {
 }
 
 impl CalendarData {
-    pub fn apply_transactions(
-        &mut self,
-        operations: &[CalendarTxn],
-    ) -> Result<(), StateError> {
-        // TODO: transact already cloned the data, so the whole calendar is
-        // deep-cloned twice per edit. The model implementation is a
-        // placeholder anyway.
-        let mut next = self.clone();
-        for operation in operations {
-            match operation {
-                CalendarTxn::SetDayDescription { date, description } => {
-                    validate_text(description)?;
-                    let day = next.days.entry(*date).or_default();
-                    day.description.clone_from(description);
-                    if day.description.is_empty() && day.events.is_empty() {
-                        next.days.remove(date);
-                    }
-                }
-                CalendarTxn::CreateEvent {
-                    id,
-                    start_date,
-                    end_date,
-                    description,
-                } => {
-                    validate_event_range(*start_date, *end_date)?;
-                    validate_text(description)?;
-                    if next.events.contains_key(id) {
-                        return Err(StateError::DuplicateEvent(*id));
-                    }
-                    let event = CalendarEvent {
-                        id: *id,
-                        start_date: *start_date,
-                        end_date: *end_date,
-                        description: description.clone(),
-                        draft: false,
-                    };
-                    next.add_memberships(&event);
-                    next.events.insert(*id, event);
-                }
-                CalendarTxn::SetEventDescription { id, description } => {
-                    validate_text(description)?;
-                    let event = next
-                        .events
-                        .get_mut(id)
-                        .ok_or(StateError::MissingEvent(*id))?;
-                    event.description.clone_from(description);
-                }
-                CalendarTxn::SetEventStart { id, start_date } => {
-                    let old = next
-                        .events
-                        .get(id)
-                        .cloned()
-                        .ok_or(StateError::MissingEvent(*id))?;
-                    validate_event_range(*start_date, old.end_date)?;
-                    next.remove_memberships(&old);
-                    let event = next.events.get_mut(id).expect("event checked above");
-                    event.start_date = *start_date;
-                    let updated = event.clone();
-                    next.add_memberships(&updated);
-                }
-                CalendarTxn::SetEventEnd { id, end_date } => {
-                    let old = next
-                        .events
-                        .get(id)
-                        .cloned()
-                        .ok_or(StateError::MissingEvent(*id))?;
-                    validate_event_range(old.start_date, *end_date)?;
-                    next.remove_memberships(&old);
-                    let event = next.events.get_mut(id).expect("event checked above");
-                    event.end_date = *end_date;
-                    let updated = event.clone();
-                    next.add_memberships(&updated);
-                }
-                CalendarTxn::DeleteEvent { id } => {
-                    let event = next
-                        .events
-                        .remove(id)
-                        .ok_or(StateError::MissingEvent(*id))?;
-                    next.remove_memberships(&event);
-                }
-                CalendarTxn::SetSettings { settings } => {
-                    next.settings.clone_from(settings);
-                }
-            }
-        }
-        *self = next;
-        Ok(())
-    }
-
     fn add_memberships(&mut self, event: &CalendarEvent) {
         let mut date = event.start_date;
         loop {
@@ -432,7 +343,83 @@ impl StateClient for CalendarState {
             })
             .collect();
         let mut next = self.data.clone();
-        next.apply_transactions(&operations)?;
+        for operation in &operations {
+            match operation {
+                CalendarTxn::SetDayDescription { date, description } => {
+                    validate_text(description)?;
+                    let day = next.days.entry(*date).or_default();
+                    day.description.clone_from(description);
+                    if day.description.is_empty() && day.events.is_empty() {
+                        next.days.remove(date);
+                    }
+                }
+                CalendarTxn::CreateEvent {
+                    id,
+                    start_date,
+                    end_date,
+                    description,
+                } => {
+                    validate_event_range(*start_date, *end_date)?;
+                    validate_text(description)?;
+                    if next.events.contains_key(id) {
+                        return Err(StateError::DuplicateEvent(*id));
+                    }
+                    let event = CalendarEvent {
+                        id: *id,
+                        start_date: *start_date,
+                        end_date: *end_date,
+                        description: description.clone(),
+                        draft: false,
+                    };
+                    next.add_memberships(&event);
+                    next.events.insert(*id, event);
+                }
+                CalendarTxn::SetEventDescription { id, description } => {
+                    validate_text(description)?;
+                    let event = next
+                        .events
+                        .get_mut(id)
+                        .ok_or(StateError::MissingEvent(*id))?;
+                    event.description.clone_from(description);
+                }
+                CalendarTxn::SetEventStart { id, start_date } => {
+                    let old = next
+                        .events
+                        .get(id)
+                        .cloned()
+                        .ok_or(StateError::MissingEvent(*id))?;
+                    validate_event_range(*start_date, old.end_date)?;
+                    next.remove_memberships(&old);
+                    let event = next.events.get_mut(id).expect("event checked above");
+                    event.start_date = *start_date;
+                    let updated = event.clone();
+                    next.add_memberships(&updated);
+                }
+                CalendarTxn::SetEventEnd { id, end_date } => {
+                    let old = next
+                        .events
+                        .get(id)
+                        .cloned()
+                        .ok_or(StateError::MissingEvent(*id))?;
+                    validate_event_range(old.start_date, *end_date)?;
+                    next.remove_memberships(&old);
+                    let event = next.events.get_mut(id).expect("event checked above");
+                    event.end_date = *end_date;
+                    let updated = event.clone();
+                    next.add_memberships(&updated);
+                }
+                CalendarTxn::DeleteEvent { id } => {
+                    let event = next
+                        .events
+                        .remove(id)
+                        .ok_or(StateError::MissingEvent(*id))?;
+                    next.remove_memberships(&event);
+                }
+                CalendarTxn::SetSettings { settings } => {
+                    next.settings.clone_from(settings);
+                }
+            }
+        }
         if let Some(path) = &self.path {
             if let Some(parent) = path.parent() {
                 fs::create_dir_all(parent)
@@ -498,40 +485,43 @@ mod tests {
     #[test]
     fn transactions_keep_day_memberships_in_sync() {
         let id = Uuid::from_u128(1);
-        let mut data = CalendarData::default();
-        data.apply_transactions(&[CalendarTxn::CreateEvent {
-            id,
-            start_date: date(10),
-            end_date: date(12),
-            description: "trip".into(),
-        }])
-        .unwrap();
-        for day in 10..=12 {
-            assert!(data.days.get(&date(day)).unwrap().events.contains(&id));
-        }
-
-        data.apply_transactions(&[CalendarTxn::SetEventStart {
-            id,
-            start_date: date(11),
-        }])
-        .unwrap();
-        assert!(data.days.get(&date(10)).is_none());
-        for day in 11..=12 {
-            assert!(data.days.get(&date(day)).unwrap().events.contains(&id));
-        }
-
-        data.apply_transactions(&[CalendarTxn::DeleteEvent { id }])
+        let mut state = CalendarState::memory(state_events().0);
+        state
+            .transact(vec![CalendarTxn::CreateEvent {
+                id,
+                start_date: date(10),
+                end_date: date(12),
+                description: "trip".into(),
+            }])
             .unwrap();
-        assert!(data.events.get(&id).is_none());
-        assert!(data.days.get(&date(11)).is_none());
-        assert!(data.days.get(&date(12)).is_none());
+        for day in 10..=12 {
+            assert!(state.data.days.get(&date(day)).unwrap().events.contains(&id));
+        }
+
+        state
+            .transact(vec![CalendarTxn::SetEventStart {
+                id,
+                start_date: date(11),
+            }])
+            .unwrap();
+        assert!(state.data.days.get(&date(10)).is_none());
+        for day in 11..=12 {
+            assert!(state.data.days.get(&date(day)).unwrap().events.contains(&id));
+        }
+
+        state
+            .transact(vec![CalendarTxn::DeleteEvent { id }])
+            .unwrap();
+        assert!(state.data.events.get(&id).is_none());
+        assert!(state.data.days.get(&date(11)).is_none());
+        assert!(state.data.days.get(&date(12)).is_none());
     }
 
     #[test]
     fn transaction_batches_are_atomic() {
         let id = Uuid::from_u128(2);
-        let mut data = CalendarData::default();
-        let result = data.apply_transactions(&[
+        let mut state = CalendarState::memory(state_events().0);
+        let result = state.transact(vec![
             CalendarTxn::SetDayDescription {
                 date: date(10),
                 description: "kept out".into(),
@@ -542,7 +532,7 @@ mod tests {
             },
         ]);
         assert_eq!(result, Err(StateError::MissingEvent(id)));
-        assert_eq!(data, CalendarData::default());
+        assert_eq!(state.data, CalendarData::default());
     }
 
     #[test]
