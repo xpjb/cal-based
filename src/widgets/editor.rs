@@ -1,7 +1,3 @@
-use super::{
-    scroll::Scroll,
-    text_area::TextContent,
-};
 use crate::*;
 
 use based::{

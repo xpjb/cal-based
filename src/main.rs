@@ -1,5 +1,5 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
 fn main() -> Result<(), String> {
-    cal_based::widgets::run()
+    cal_based::run()
 }

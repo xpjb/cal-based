@@ -10,14 +10,16 @@ mod text_area;
 mod text_edit;
 mod ui;
 
-pub(crate) use button::*;
-pub(crate) use calendar::*;
-pub(crate) use day::*;
-pub(crate) use editor::*;
-pub(crate) use event::*;
-pub(crate) use paint::*;
-pub(crate) use settings::*;
-pub(crate) use ui::*;
+pub use button::*;
+pub use calendar::*;
+pub use day::*;
+pub use editor::*;
+pub use event::*;
+pub use paint::*;
+pub use scroll::*;
+pub use settings::*;
+pub use text_area::*;
+pub use ui::*;
 
 use crate::*;
 #[cfg(not(target_arch = "wasm32"))]
@@ -38,9 +40,9 @@ use based::{
 #[cfg(not(target_arch = "wasm32"))]
 use directories::ProjectDirs;
 
-pub(crate) type AppEvent = Event<StateEvent>;
+pub type AppEvent = Event<StateEvent>;
 
-pub(crate) struct AppContext<'a> {
+pub struct AppContext<'a> {
     window: &'a Window,
     input: &'a Input,
     state: &'a mut dyn StateClient<

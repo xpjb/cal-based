@@ -1,6 +1,9 @@
-pub mod model;
-pub(crate) use model::*;
+mod model;
 
 #[path = "widgets/lib.rs"]
-pub mod widgets;
-pub(crate) use widgets::*;
+mod widgets;
+
+pub use widgets::run;
+
+use model::*;
+use widgets::*;

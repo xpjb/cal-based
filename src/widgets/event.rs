@@ -44,7 +44,7 @@ pub struct EventHit {
 }
 
 impl CalendarEvent {
-    pub(crate) fn draft(start_date: NaiveDate, end_date: NaiveDate) -> Self {
+    pub fn draft(start_date: NaiveDate, end_date: NaiveDate) -> Self {
         Self {
             id: DRAFT_ID,
             start_date,
@@ -54,7 +54,7 @@ impl CalendarEvent {
         }
     }
 
-    pub(crate) fn append_strips(
+    pub fn append_strips(
         &self,
         strips: &mut Vec<EventStrip>,
         weeks: &[WeekVisual],

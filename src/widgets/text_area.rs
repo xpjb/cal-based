@@ -1,7 +1,4 @@
-use super::{
-    scroll::{Scroll, ScrollContent, ScrollState},
-    text_edit::TextEdit,
-};
+use super::text_edit::TextEdit;
 use crate::*;
 use std::time::Duration;
 
@@ -95,7 +92,7 @@ impl Scroll<TextContent> {
     }
 }
 
-pub(crate) struct TextContent {
+pub struct TextContent {
     edit: TextEdit,
     layout: Option<TextAreaLayout>,
     scroll: ScrollState,

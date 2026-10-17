@@ -12,7 +12,7 @@ const DRAG_MAX_STEP: f32 = 0.05;
 const DRAG_RATE: f32 = 0.05;
 
 #[derive(Clone, Copy, Default, PartialEq)]
-pub(crate) struct Viewport {
+pub struct Viewport {
     pub client: Rect,
     offset: f32,
 }
@@ -28,18 +28,18 @@ impl Viewport {
 }
 
 #[derive(Default)]
-pub(crate) struct ScrollState {
+pub struct ScrollState {
     pub viewport: Viewport,
     pub content_height: f32,
     pub reveal: Option<Range<f32>>,
     pub viewport_changed: bool,
 }
 
-pub(crate) trait ScrollContent {
+pub trait ScrollContent {
     fn scroll_state(&mut self) -> (&mut ScrollState, Option<f32>);
 }
 
-pub(crate) struct Scroll<W> {
+pub struct Scroll<W> {
     pub child: W,
     bounds: Rect,
     line_step: f32,
