@@ -24,7 +24,6 @@ const ROW_STYLE: SurfaceStyle = SurfaceStyle {
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[repr(usize)]
 enum DayColorSlot {
     PastWeekday,
     TodayWeekday,

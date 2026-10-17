@@ -107,18 +107,13 @@ pub struct CalendarData {
 }
 
 impl CalendarData {
-    pub fn day(&self, date: NaiveDate) -> Option<&DayRecord> {
-        self.days.get(&date)
-    }
-
-    pub fn event(&self, id: EventId) -> Option<&CalendarEvent> {
-        self.events.get(&id)
-    }
-
     pub fn apply_transactions(
         &mut self,
         operations: &[CalendarTxn],
     ) -> Result<(), StateError> {
+        // TODO: transact already cloned the data, so the whole calendar is
+        // deep-cloned twice per edit. The model implementation is a
+        // placeholder anyway.
         let mut next = self.clone();
         for operation in operations {
             match operation {
@@ -509,7 +504,7 @@ mod tests {
         }])
         .unwrap();
         for day in 10..=12 {
-            assert!(data.day(date(day)).unwrap().events.contains(&id));
+            assert!(data.days.get(&date(day)).unwrap().events.contains(&id));
         }
 
         data.apply_transactions(&[CalendarTxn::SetEventStart {
@@ -517,16 +512,16 @@ mod tests {
             start_date: date(11),
         }])
         .unwrap();
-        assert!(data.day(date(10)).is_none());
+        assert!(data.days.get(&date(10)).is_none());
         for day in 11..=12 {
-            assert!(data.day(date(day)).unwrap().events.contains(&id));
+            assert!(data.days.get(&date(day)).unwrap().events.contains(&id));
         }
 
         data.apply_transactions(&[CalendarTxn::DeleteEvent { id }])
             .unwrap();
-        assert!(data.event(id).is_none());
-        assert!(data.day(date(11)).is_none());
-        assert!(data.day(date(12)).is_none());
+        assert!(data.events.get(&id).is_none());
+        assert!(data.days.get(&date(11)).is_none());
+        assert!(data.days.get(&date(12)).is_none());
     }
 
     #[test]
