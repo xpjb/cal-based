@@ -1,9 +1,9 @@
 use crate::*;
 
 use based::{
-    ElementState, Event, EventFlow, HostEvent, InputEvent, Key, MouseButton, NamedKey, Widget,
+    CursorIcon, ElementState, Event, EventFlow, HostEvent, InputEvent, Key, MouseButton, NamedKey,
+    Widget,
     glam::{Vec2, Vec4},
-    widget::window::CursorIcon,
 };
 use chrono::NaiveDate;
 

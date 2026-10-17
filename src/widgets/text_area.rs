@@ -1,16 +1,12 @@
-use super::text_edit::TextEdit;
+use super::{sanscale::raw::{self as text, Caret, Motion}, text_edit::TextEdit};
 use crate::*;
 use std::time::Duration;
 
 use based::{
-    ElementState, Event, EventFlow, HostEvent, InputEvent, Key, ModifiersState, MouseButton,
-    NamedKey, Widget,
+    CursorIcon, ElementState, Event, EventFlow, HostEvent, InputEvent, Key, ModifiersState,
+    MouseButton, NamedKey, Widget,
     glam::{Vec2, Vec4},
     web_time::Instant,
-    widget::{
-        sanscale::raw::{self as text, Caret, Motion},
-        window::CursorIcon,
-    },
 };
 
 const BASE_FONT_SIZE: f32 = 18.0;
@@ -80,7 +76,7 @@ impl Scroll<TextContent> {
     }
 
     pub fn control_key(&self) -> bool {
-        self.child.modifiers.control_key()
+        self.child.modifiers.ctrl()
     }
 
     pub fn cursor_icon(&self) -> CursorIcon {
@@ -396,7 +392,7 @@ impl Widget<AppContext<'_>, AppEvent> for TextContent {
                     });
                     self.selecting = true;
                     self.drag_started = false;
-                    self.place_at_cursor(context, self.modifiers.shift_key(), count);
+                    self.place_at_cursor(context, self.modifiers.shift(), count);
                     return EventFlow::Consumed;
                 }
                 self.last_click = None;
@@ -426,8 +422,8 @@ impl Widget<AppContext<'_>, AppEvent> for TextContent {
                 return EventFlow::Consumed;
             }
             Event::Input(InputEvent::Keyboard(key)) if key.state == ElementState::Pressed => {
-                let ctrl = self.modifiers.control_key();
-                let shift = self.modifiers.shift_key();
+                let ctrl = self.modifiers.ctrl();
+                let shift = self.modifiers.shift();
                 let handle = self.shape(context);
                 let text_layout = handle.map(|handle| context.text.raw.measure(handle));
                 let motion = match &key.logical_key {

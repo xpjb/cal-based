@@ -2,11 +2,9 @@ use std::mem::size_of;
 
 use based::{
     glam::{UVec2, Vec2, Vec4},
-    widget::{
-        sanscale::{Sanscale, raw as text},
-        wgpu::{Wgpu, WgpuFrame, raw as wgpu},
-    },
+    widget::wgpu::{Wgpu, WgpuFrame, raw as wgpu},
 };
+use super::sanscale::{Sanscale, raw as text};
 use bytemuck::{Pod, Zeroable};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]

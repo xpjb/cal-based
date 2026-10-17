@@ -7,10 +7,11 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/xpjb/cal-based"
 
 [dependencies]
-based = { git = "ssh://git@github.com/xpjb/based.git", rev = "a75a194b0ec73651c6db402da416ea862f65b0c1", features = ["wgpu", "sanscale"] }
+based = { git = "ssh://git@github.com/xpjb/based.git", rev = "a202451d344674fbdd53867f240f8b0dbe9de484", features = ["wgpu"] }
 bytemuck = { version = "1", features = ["derive"] }
 chrono = { version = "0.4", features = ["clock", "serde"] }
 ropey = { version = "1", default-features = false, features = ["simd"] }
+sanscale = { git = "https://github.com/xpjb/sanscale", rev = "c9f70ad7c500ffc91ae448d82a52aca963f0ee72" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"

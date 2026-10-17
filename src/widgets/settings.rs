@@ -1,9 +1,8 @@
 use crate::*;
 use based::{
-    ElementState, Event, EventFlow, HostEvent, InputEvent, Key, NamedKey, TouchPhase,
+    CursorIcon, ElementState, Event, EventFlow, HostEvent, InputEvent, Key, NamedKey, TouchPhase,
     Widget,
     glam::{Vec2, Vec4},
-    widget::window::CursorIcon,
 };
 
 const PANEL_BG: Vec4 = Vec4::new(0.075, 0.088, 0.108, 1.0);

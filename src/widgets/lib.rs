@@ -3,7 +3,9 @@ mod calendar;
 mod day;
 mod editor;
 mod event;
+mod input;
 mod paint;
+mod sanscale;
 mod scroll;
 mod settings;
 mod text_area;
@@ -15,7 +17,9 @@ pub use calendar::*;
 pub use day::*;
 pub use editor::*;
 pub use event::*;
+pub use input::*;
 pub use paint::*;
+pub use sanscale::*;
 pub use scroll::*;
 pub use settings::*;
 pub use text_area::*;
@@ -26,17 +30,13 @@ use crate::*;
 use std::{env, path::PathBuf};
 
 use based::{
-    ElementState, Event, EventFlow, HostEvent, InputEvent, MouseButton, TouchPhase, Wake, Widget,
-    backend::winit,
+    BasedOptions, CursorIcon, ElementState, Event, EventFlow, Host, HostEvent, InputEvent,
+    MouseButton, TouchPhase, Waker, Widget, Window, WindowOptions,
     glam::{UVec2, Vec2, Vec4},
     web_time::Instant,
-    widget::{
-        Input,
-        sanscale::{Sanscale, raw as text},
-        wgpu::{Wgpu, WgpuConfig, raw as wgpu},
-        window::{CursorIcon, Window, WindowConfig},
-    },
+    widget::wgpu::{Wgpu, WgpuConfig, raw as wgpu},
 };
+use sanscale::raw as text;
 #[cfg(not(target_arch = "wasm32"))]
 use directories::ProjectDirs;
 
@@ -168,7 +168,7 @@ struct App {
     renderer: Renderer,
     gpu: Wgpu,
     window: Window,
-    wake: Wake,
+    wake: Waker,
 }
 
 impl App {
@@ -251,7 +251,7 @@ impl Widget<(), AppEvent> for App {
             && let Some(instant) = next_wake
         {
             self.wake
-                .after(instant.saturating_duration_since(Instant::now()));
+                .wake_me_in(instant.saturating_duration_since(Instant::now()));
         }
         flow
     }
@@ -266,14 +266,17 @@ pub fn run() -> Result<(), String> {
     #[cfg(not(target_arch = "wasm32"))]
     let data_path = data_path
         .ok_or_else(|| "Local data directory is unavailable".to_owned())?;
-    winit::run(
-        WindowConfig {
+    based::run(
+        BasedOptions::window(WindowOptions {
             title: "Cal · based".into(),
             size: UVec2::new(1180, 820),
             visible: false,
             ..Default::default()
-        },
-        move |window, events, wake| async move {
+        }),
+        move |host: Host, events: based::Sender<StateEvent>, wake: Waker| async move {
+            let window = host
+                .into_window()
+                .ok_or_else(|| "cal-based requires a window host".to_owned())?;
             window.set_min_inner_size(Some(UVec2::new(720, 520)));
             window.set_ime_allowed(false);
             let gpu = Wgpu::new(&window, WgpuConfig::default()).await?;

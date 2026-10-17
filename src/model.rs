@@ -2,9 +2,10 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
     path::PathBuf,
+    rc::Rc,
 };
 
-use based::{Event, EventSender};
+use based::{Event, Sender};
 use chrono::{Days, NaiveDate};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -238,17 +239,38 @@ pub enum StateEvent {
     },
 }
 
+#[derive(Clone)]
+pub struct StateSender(Rc<dyn Fn(StateEvent)>);
+
+impl StateSender {
+    fn new(send: impl Fn(StateEvent) + 'static) -> Self {
+        Self(Rc::new(send))
+    }
+
+    fn send(&self, event: StateEvent) {
+        (self.0)(event);
+    }
+}
+
+impl From<Sender<StateEvent>> for StateSender {
+    fn from(sender: Sender<StateEvent>) -> Self {
+        Self::new(move |event| {
+            let _ = sender.send(Event::User(event));
+        })
+    }
+}
+
 pub struct CalendarState {
     data: CalendarData,
     path: Option<PathBuf>,
     next_request_id: RequestId,
-    events: EventSender<StateEvent>,
+    events: StateSender,
 }
 
 impl CalendarState {
     pub fn open(
         path: impl Into<PathBuf>,
-        events: EventSender<StateEvent>,
+        events: impl Into<StateSender>,
     ) -> Result<Self, StateError> {
         let path = path.into();
         let mut data = if path.exists() {
@@ -278,16 +300,16 @@ impl CalendarState {
             data,
             path: Some(path),
             next_request_id: 1,
-            events,
+            events: events.into(),
         })
     }
 
-    pub fn memory(events: EventSender<StateEvent>) -> Self {
+    pub fn memory(events: impl Into<StateSender>) -> Self {
         Self {
             data: CalendarData::default(),
             path: None,
             next_request_id: 1,
-            events,
+            events: events.into(),
         }
     }
 
@@ -306,11 +328,11 @@ impl CalendarState {
             CalendarKey::Event(id) => CalendarValue::Event(self.data.events.get(&id).cloned()),
             CalendarKey::Settings => CalendarValue::Settings(self.data.settings.clone()),
         };
-        let _ = self.events.send(Event::User(StateEvent::Value {
+        self.events.send(StateEvent::Value {
             request_id,
             key,
             result: Ok(value),
-        }));
+        });
     }
 }
 
@@ -469,15 +491,11 @@ mod tests {
         NaiveDate::from_ymd_opt(2026, 10, day).unwrap()
     }
 
-    fn state_events() -> (EventSender<StateEvent>, Arc<Mutex<Vec<StateEvent>>>) {
+    fn state_events() -> (StateSender, Arc<Mutex<Vec<StateEvent>>>) {
         let events = Arc::new(Mutex::new(Vec::new()));
         let captured = events.clone();
-        let sender = EventSender::new(move |event| {
-            let Event::User(event) = event else {
-                panic!("unexpected non-user event");
-            };
+        let sender = StateSender::new(move |event| {
             captured.lock().unwrap().push(event);
-            Ok(())
         });
         (sender, events)
     }

@@ -1,6 +1,6 @@
 use std::ops::Range;
 
-use based::widget::sanscale::raw::{Caret, Layout, Motion, WordBoundaries};
+use super::sanscale::raw::{Caret, Layout, Motion, WordBoundaries};
 use ropey::Rope;
 
 struct Document {
@@ -238,7 +238,7 @@ fn normalize(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use based::widget::sanscale::raw::{CaretStop, LayoutLineSpec, LineMetrics};
+    use super::super::sanscale::raw::{CaretStop, LayoutLineSpec, LineMetrics};
 
     fn line(byte_range: Range<usize>, top_em: f32) -> LayoutLineSpec {
         let width_em = byte_range.len() as f32;
