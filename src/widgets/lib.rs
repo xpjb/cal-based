@@ -1,3 +1,4 @@
+mod button;
 mod calendar;
 mod day;
 mod editor;
@@ -9,6 +10,7 @@ mod text_area;
 mod text_edit;
 mod ui;
 
+pub(crate) use button::*;
 pub(crate) use calendar::*;
 pub(crate) use day::*;
 pub(crate) use editor::*;
