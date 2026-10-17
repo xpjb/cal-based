@@ -85,4 +85,4 @@ dist/cal-based-0.1.3-windows-x64.exe
 dist/cal-based-0.1.3-windows-x64.exe.sha256
 ```
 
-Rust checks compile every native target, run behavioral tests with Nextest, and use `cargo xwin` for the Windows target. Clippy is not part of this project workflow.
+Rust checks compile every native target, run behavioral tests with Nextest, and use `cargo xwin` for the Windows target.
