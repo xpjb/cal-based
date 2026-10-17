@@ -211,6 +211,12 @@ impl Widget<(), AppEvent> for App {
         if redraw {
             self.window.set_visible(true);
         }
+        if matches!(event, Event::Host(HostEvent::TargetCreated)) {
+            let initial_redraw = Event::Host(HostEvent::RedrawRequested);
+            let _ = self.handle_event(&mut (), &initial_redraw);
+            self.window.set_visible(true);
+            self.window.request_redraw();
+        }
 
         if let Some(error) = self.gpu.take_error() {
             panic!("{error}");
