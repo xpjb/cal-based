@@ -221,7 +221,6 @@ pub enum StateError {
     DescriptionTooLong,
     #[error("request ID space is exhausted")]
     RequestIdExhausted,
-    #[cfg(not(target_arch = "wasm32"))]
     #[error("read calendar state: {0}")]
     Read(String),
     #[error("decode calendar state: {0}")]
@@ -247,7 +246,6 @@ pub struct CalendarState {
 }
 
 impl CalendarState {
-    #[cfg(not(target_arch = "wasm32"))]
     pub fn open(
         path: impl Into<PathBuf>,
         events: EventSender<StateEvent>,
@@ -284,7 +282,6 @@ impl CalendarState {
         })
     }
 
-    #[cfg(any(target_arch = "wasm32", test))]
     pub fn memory(events: EventSender<StateEvent>) -> Self {
         Self {
             data: CalendarData::default(),
