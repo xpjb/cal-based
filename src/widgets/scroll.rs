@@ -48,7 +48,7 @@ pub(crate) struct Scroll<W> {
 }
 
 impl<W: ScrollContent> Scroll<W> {
-    pub fn with_child(child: W) -> Self {
+    pub fn new(child: W) -> Self {
         Self {
             child,
             bounds: Rect::default(),

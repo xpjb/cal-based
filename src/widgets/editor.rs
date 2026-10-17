@@ -1,4 +1,7 @@
-use super::text_area::TextArea;
+use super::{
+    scroll::Scroll,
+    text_area::TextContent,
+};
 use crate::*;
 
 use based::{
@@ -22,7 +25,7 @@ enum EditorTarget {
 
 struct Session {
     target: EditorTarget,
-    text: TextArea,
+    text: Scroll<TextContent>,
     error: Option<String>,
 }
 
@@ -65,7 +68,7 @@ impl EditorWidget {
     ) {
         self.session = Some(Session {
             target,
-            text: TextArea::new(&description, context.now),
+            text: Scroll::new(TextContent::new(&description, context.now)),
             error: None,
         });
         self.layout = None;

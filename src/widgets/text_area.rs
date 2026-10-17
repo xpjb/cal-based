@@ -50,11 +50,9 @@ struct LastClick {
     count: u8,
 }
 
-pub(crate) type TextArea = Scroll<TextContent>;
-
-impl Scroll<TextContent> {
+impl TextContent {
     pub fn new(content: &str, now: Instant) -> Self {
-        Self::with_child(TextContent {
+        Self {
             edit: TextEdit::new(content),
             layout: None,
             scroll: ScrollState::default(),
@@ -67,9 +65,11 @@ impl Scroll<TextContent> {
             last_click: None,
             drag_started: false,
             hovered: false,
-        })
+        }
     }
+}
 
+impl Scroll<TextContent> {
     pub fn content(&self) -> String {
         self.child.edit.content()
     }
