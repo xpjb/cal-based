@@ -25,9 +25,11 @@ struct Session {
     error: Option<String>,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 struct EditorLayout {
     panel: Rect,
+    save: Rect,
+    cancel: Rect,
     delete: Option<Rect>,
 }
 
@@ -35,9 +37,9 @@ pub struct EditorWidget {
     session: Option<Session>,
     layout: Option<EditorLayout>,
     cursor: Vec2,
-    save_button: Button,
-    cancel_button: Button,
-    delete_button: Button,
+    save_button: Button<TextButton>,
+    cancel_button: Button<TextButton>,
+    delete_button: Button<TextButton>,
 }
 
 impl EditorWidget {
@@ -46,9 +48,9 @@ impl EditorWidget {
             session: None,
             layout: None,
             cursor: Vec2::ZERO,
-            save_button: Button::default(),
-            cancel_button: Button::default(),
-            delete_button: Button::default(),
+            save_button: Button::text("Save", 13.0, PRIMARY_BUTTON),
+            cancel_button: Button::text("Cancel", 13.0, NEUTRAL_BUTTON),
+            delete_button: Button::text("Delete", 13.0, DANGER_BUTTON),
         }
     }
 
@@ -96,9 +98,6 @@ impl EditorWidget {
     fn close(&mut self, context: &mut AppContext<'_>) {
         self.session = None;
         self.layout = None;
-        self.save_button.cancel();
-        self.cancel_button.cancel();
-        self.delete_button.cancel();
         context.window.set_ime_allowed(false);
         context.set_cursor(CursorIcon::Default);
         context.window.request_redraw();
@@ -176,13 +175,12 @@ impl Widget<AppContext<'_>, AppEvent> for EditorWidget {
                 100.0 * scale,
                 40.0 * scale,
             ));
-            self.layout = Some(EditorLayout { panel, delete });
-            self.save_button.set_rect(save);
-            self.cancel_button.set_rect(cancel);
-            self.delete_button.set_rect(delete.unwrap_or_default());
-            self.save_button.set_hover(self.cursor);
-            self.cancel_button.set_hover(self.cursor);
-            self.delete_button.set_hover(self.cursor);
+            self.layout = Some(EditorLayout {
+                panel,
+                save,
+                cancel,
+                delete,
+            });
 
             context.quad(
                 Rect::new(0.0, 0.0, viewport.x, viewport.y),
@@ -272,13 +270,46 @@ impl Widget<AppContext<'_>, AppEvent> for EditorWidget {
                 );
             }
 
-            self.cancel_button
-                .paint(context, "Cancel", 13.0, scale, NEUTRAL_BUTTON);
-            self.save_button
-                .paint(context, "Save", 13.0, scale, PRIMARY_BUTTON);
-            if delete.is_some() {
-                self.delete_button
-                    .paint(context, "Delete", 13.0, scale, DANGER_BUTTON);
+            let _ = self.cancel_button.handle_event(context, event, cancel, ());
+            let _ = self.save_button.handle_event(context, event, save, ());
+            if let Some(delete) = delete {
+                let _ = self.delete_button.handle_event(context, event, delete, ());
+            }
+            return EventFlow::Consumed;
+        }
+
+        let layout = self.layout.unwrap_or_default();
+        let (save_flow, save) = self.save_button.handle_event(context, event, layout.save, ());
+        let (cancel_flow, cancel) =
+            self.cancel_button.handle_event(context, event, layout.cancel, ());
+        let (delete_flow, delete) = if let Some(rect) = layout.delete {
+            self.delete_button.handle_event(context, event, rect, ())
+        } else {
+            (EventFlow::NotConsumed, false)
+        };
+        let buttons_consumed = save_flow == EventFlow::Consumed
+            || cancel_flow == EventFlow::Consumed
+            || delete_flow == EventFlow::Consumed;
+        if save {
+            self.save(context);
+            return EventFlow::Consumed;
+        }
+        if cancel {
+            self.close(context);
+            return EventFlow::Consumed;
+        }
+        if delete {
+            let target = self.session.as_ref().map(|session| session.target);
+            if let Some(EditorTarget::Event { id, .. }) = target {
+                match context.state.transact(vec![CalendarTxn::DeleteEvent { id }]) {
+                    Ok(_) => self.close(context),
+                    Err(error) => {
+                        if let Some(session) = &mut self.session {
+                            session.error = Some(error.to_string());
+                        }
+                        context.window.request_redraw();
+                    }
+                }
             }
             return EventFlow::Consumed;
         }
@@ -305,9 +336,6 @@ impl Widget<AppContext<'_>, AppEvent> for EditorWidget {
                 if let Some(session) = &mut self.session {
                     let _ = session.text.handle_event(context, event);
                 }
-                self.save_button.cancel();
-                self.cancel_button.cancel();
-                self.delete_button.cancel();
                 context.set_cursor(CursorIcon::Default);
                 context.window.request_redraw();
             }
@@ -316,17 +344,11 @@ impl Widget<AppContext<'_>, AppEvent> for EditorWidget {
                 if let Some(session) = &mut self.session {
                     let _ = session.text.handle_event(context, event);
                 }
-                let buttons_changed = self.save_button.pointer_moved(u64::MAX, self.cursor, true)
-                    | self.cancel_button.pointer_moved(u64::MAX, self.cursor, true)
-                    | self.delete_button.pointer_moved(u64::MAX, self.cursor, true);
-                if buttons_changed {
-                    context.window.request_redraw();
-                }
-                let delete_hovered = self.layout.is_some_and(|layout| {
-                    layout.delete.is_some() && self.delete_button.contains(self.cursor)
-                });
-                let cursor = if self.save_button.contains(self.cursor)
-                    || self.cancel_button.contains(self.cursor)
+                let delete_hovered = layout
+                    .delete
+                    .is_some_and(|rect| rect.contains(self.cursor));
+                let cursor = if layout.save.contains(self.cursor)
+                    || layout.cancel.contains(self.cursor)
                     || delete_hovered
                 {
                     CursorIcon::Pointer
@@ -352,13 +374,9 @@ impl Widget<AppContext<'_>, AppEvent> for EditorWidget {
                     self.close(context);
                     return EventFlow::Consumed;
                 }
-                if self.save_button.press(u64::MAX, self.cursor)
-                    || self.cancel_button.press(u64::MAX, self.cursor)
-                    || (layout.delete.is_some()
-                        && self.delete_button.press(u64::MAX, self.cursor))
+                if !buttons_consumed
+                    && let Some(session) = &mut self.session
                 {
-                    context.window.request_redraw();
-                } else if let Some(session) = &mut self.session {
                     let _ = session.text.handle_event(context, event);
                 }
             }
@@ -370,36 +388,13 @@ impl Widget<AppContext<'_>, AppEvent> for EditorWidget {
                 if let Some(point) = context.input.pointer() {
                     self.cursor = point;
                 }
-                if let Some(session) = &mut self.session {
+                if !buttons_consumed
+                    && let Some(session) = &mut self.session
+                {
                     let _ = session.text.handle_event(context, event);
                 }
-                let save = self.save_button.release(u64::MAX, self.cursor);
-                let cancel = self.cancel_button.release(u64::MAX, self.cursor);
-                let delete = self.delete_button.release(u64::MAX, self.cursor);
-                if save == ButtonRelease::Activated {
-                    self.save(context);
-                } else if cancel == ButtonRelease::Activated {
-                    self.close(context);
-                } else if delete == ButtonRelease::Activated {
-                    let target = self.session.as_ref().map(|session| session.target);
-                    if let Some(EditorTarget::Event { id, .. }) = target {
-                        match context.state.transact(vec![CalendarTxn::DeleteEvent { id }]) {
-                            Ok(_) => self.close(context),
-                            Err(error) => {
-                                if let Some(session) = &mut self.session {
-                                    session.error = Some(error.to_string());
-                                }
-                                context.window.request_redraw();
-                            }
-                        }
-                    }
-                } else if save != ButtonRelease::Ignored
-                    || cancel != ButtonRelease::Ignored
-                    || delete != ButtonRelease::Ignored
-                {
-                    context.window.request_redraw();
-                }
             }
+            _ if buttons_consumed => {}
             _ => {
                 if let Some(session) = &mut self.session {
                     let _ = session.text.handle_event(context, event);

@@ -26,7 +26,7 @@ use crate::*;
 use std::{env, path::PathBuf};
 
 use based::{
-    Event, EventFlow, HostEvent, Wake, Widget,
+    ElementState, Event, EventFlow, HostEvent, InputEvent, MouseButton, TouchPhase, Wake, Widget,
     backend::winit,
     glam::{UVec2, Vec2, Vec4},
     web_time::Instant,
@@ -59,6 +59,28 @@ pub struct AppContext<'a> {
 }
 
 impl AppContext<'_> {
+    fn pointer_event(&self, event: &AppEvent) -> Option<(u64, Option<Vec2>, TouchPhase, bool)> {
+        Some(match event {
+            Event::Input(InputEvent::CursorMoved { position, .. }) =>
+                (u64::MAX, Some(position.as_vec2()), TouchPhase::Moved, true),
+            Event::Input(InputEvent::CursorLeft { .. }) =>
+                (u64::MAX, None, TouchPhase::Cancelled, true),
+            Event::Input(InputEvent::MouseButton {
+                button: MouseButton::Left,
+                state,
+                ..
+            }) => (
+                u64::MAX,
+                self.input.pointer(),
+                if *state == ElementState::Pressed { TouchPhase::Started } else { TouchPhase::Ended },
+                true,
+            ),
+            Event::Input(InputEvent::Touch(touch)) =>
+                (touch.id, Some(touch.position.as_vec2()), touch.phase, false),
+            _ => return None,
+        })
+    }
+
     fn wake_at(&mut self, instant: Instant) {
         if self.next_wake.is_none_or(|current| instant < current) {
             *self.next_wake = Some(instant);

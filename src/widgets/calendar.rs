@@ -5,7 +5,7 @@ use std::{
 };
 
 use based::{
-    ElementState, Event, EventFlow, HostEvent, InputEvent, Key, MouseButton, NamedKey, ScrollDelta,
+    ElementState, Event, EventFlow, HostEvent, InputEvent, Key, NamedKey, ScrollDelta,
     TouchPhase, Widget,
     glam::{Vec2, Vec4},
     web_time::Instant,
@@ -120,8 +120,8 @@ pub struct CalendarWidget {
     pointer: PointerState,
     cursor: Vec2,
     hits: HitMap,
-    today_button: Button,
-    settings_button: Button,
+    today_button: Button<TextButton>,
+    settings_button: Button<TextButton>,
     settings: SettingsWidget,
     editor: EditorWidget,
 }
@@ -142,8 +142,8 @@ impl CalendarWidget {
             pointer: PointerState::Idle,
             cursor: Vec2::ZERO,
             hits: HitMap::default(),
-            today_button: Button::default(),
-            settings_button: Button::default(),
+            today_button: Button::text("Today", 14.0, PRIMARY_BUTTON),
+            settings_button: Button::text("Settings", 14.0, NEUTRAL_BUTTON),
             settings: SettingsWidget::new(),
             editor: EditorWidget::new(),
         }
@@ -164,14 +164,6 @@ impl CalendarWidget {
         point: Vec2,
         kind: GestureKind,
     ) {
-        if self.settings_button.press(pointer, point)
-            || self.today_button.press(pointer, point)
-        {
-            self.navigation = None;
-            self.pointer = PointerState::Idle;
-            context.window.request_redraw();
-            return;
-        }
         self.navigation = None;
         if let Some(target) = self.hits.target_at(point) {
             self.pointer = PointerState::Pressed {
@@ -192,11 +184,8 @@ impl CalendarWidget {
         pointer: u64,
         point: Vec2,
         hover_capable: bool,
+        button_hovered: bool,
     ) {
-        self.today_button
-            .pointer_moved(pointer, point, hover_capable);
-        self.settings_button
-            .pointer_moved(pointer, point, hover_capable);
         let hovered_date = self.date_at(point);
         let state = std::mem::replace(&mut self.pointer, PointerState::Idle);
         self.pointer = match state {
@@ -286,8 +275,7 @@ impl CalendarWidget {
             let cursor = match self.pointer {
                 PointerState::Creating { .. } => CursorIcon::Pointer,
                 PointerState::Resizing { .. } => CursorIcon::EwResize,
-                _ if self.today_button.contains(point)
-                    || self.settings_button.contains(point) =>
+                _ if button_hovered =>
                 {
                     CursorIcon::Pointer
                 }
@@ -303,38 +291,6 @@ impl CalendarWidget {
     }
 
     fn pointer_up(&mut self, context: &mut AppContext<'_>, pointer: u64, point: Vec2) {
-        let settings = self.settings_button.release(pointer, point);
-        let today_button = self.today_button.release(pointer, point);
-        if settings == ButtonRelease::Activated {
-            self.settings
-                .open(context, self.calendar_settings.clone());
-            self.pointer = PointerState::Idle;
-            if pointer == MOUSE_POINTER {
-                context.set_cursor(CursorIcon::Default);
-            }
-            context.window.request_redraw();
-            return;
-        }
-        if today_button == ButtonRelease::Activated {
-            let today = Local::now().date_naive();
-            self.navigation = Some(Navigation {
-                target_week: week_start(today),
-                last_tick: context.now,
-            });
-            self.pointer = PointerState::Idle;
-            if pointer == MOUSE_POINTER {
-                context.set_cursor(CursorIcon::Default);
-            }
-            context.window.request_redraw();
-            return;
-        }
-        if settings != ButtonRelease::Ignored || today_button != ButtonRelease::Ignored {
-            if pointer == MOUSE_POINTER {
-                context.set_cursor(CursorIcon::Default);
-            }
-            context.window.request_redraw();
-            return;
-        }
         let state = std::mem::replace(&mut self.pointer, PointerState::Idle);
         match state {
             PointerState::Pressed {
@@ -435,6 +391,20 @@ impl CalendarWidget {
 
 impl Widget<AppContext<'_>, AppEvent> for CalendarWidget {
     fn handle_event(&mut self, context: &mut AppContext<'_>, event: &AppEvent) -> EventFlow {
+        let viewport = context.viewport.as_vec2();
+        let scale = context.scale;
+        let today_button = Rect::new(
+            viewport.x - 124.0 * scale,
+            11.0 * scale,
+            104.0 * scale,
+            42.0 * scale,
+        );
+        let settings_button = Rect::new(
+            today_button.position.x - 116.0 * scale,
+            11.0 * scale,
+            104.0 * scale,
+            42.0 * scale,
+        );
         if let Event::User(StateEvent::Value { key, result, .. }) = event {
             for day in self.days.values_mut() {
                 let _ = day.handle_event(context, event);
@@ -481,8 +451,6 @@ impl Widget<AppContext<'_>, AppEvent> for CalendarWidget {
             if let Some(point) = context.input.pointer() {
                 self.cursor = point;
             }
-            let viewport = context.viewport.as_vec2();
-            let scale = context.scale;
             let header_height = 64.0 * scale;
             let weekday_height = 36.0 * scale;
             let calendar_top = header_height + weekday_height;
@@ -491,21 +459,6 @@ impl Widget<AppContext<'_>, AppEvent> for CalendarWidget {
             let grid_width = scale.max(1.0);
             let today = Local::now().date_naive();
             let day_colors = self.calendar_settings.day_colors;
-            self.today_button.set_rect(Rect::new(
-                viewport.x - 124.0 * scale,
-                11.0 * scale,
-                104.0 * scale,
-                42.0 * scale,
-            ));
-            self.settings_button.set_rect(Rect::new(
-                self.today_button.rect().position.x - 116.0 * scale,
-                11.0 * scale,
-                104.0 * scale,
-                42.0 * scale,
-            ));
-            self.today_button.set_hover(self.cursor);
-            self.settings_button.set_hover(self.cursor);
-
             if let Some(navigation) = &self.navigation {
                 let target_week = navigation.target_week;
                 let elapsed = context.now.duration_since(navigation.last_tick);
@@ -658,8 +611,8 @@ impl Widget<AppContext<'_>, AppEvent> for CalendarWidget {
 
             let modal_open = self.editor.is_open() || self.settings.is_open();
             let hovered_target = (!modal_open
-                && !self.today_button.contains(self.cursor)
-                && !self.settings_button.contains(self.cursor))
+                && !today_button.contains(self.cursor)
+                && !settings_button.contains(self.cursor))
                 .then(|| self.hits.target_at(self.cursor))
                 .flatten();
             let pressed_target = if modal_open {
@@ -861,7 +814,7 @@ impl Widget<AppContext<'_>, AppEvent> for CalendarWidget {
                     Rect::new(
                         360.0 * scale,
                         11.0 * scale,
-                        (self.settings_button.rect().position.x - 380.0 * scale).max(0.0),
+                        (settings_button.position.x - 380.0 * scale).max(0.0),
                         42.0 * scale,
                     ),
                     12.5 * scale,
@@ -871,10 +824,8 @@ impl Widget<AppContext<'_>, AppEvent> for CalendarWidget {
                     false,
                 );
             }
-            self.settings_button
-                .paint(context, "Settings", 14.0, scale, NEUTRAL_BUTTON);
-            self.today_button
-                .paint(context, "Today", 14.0, scale, PRIMARY_BUTTON);
+            let _ = self.settings_button.handle_event(context, event, settings_button, ());
+            let _ = self.today_button.handle_event(context, event, today_button, ());
 
             let _ = self.editor.handle_event(context, event);
             let _ = self.settings.handle_event(context, event);
@@ -886,6 +837,63 @@ impl Widget<AppContext<'_>, AppEvent> for CalendarWidget {
         }
         if self.editor.is_open() {
             return self.editor.handle_event(context, event);
+        }
+
+        let pointer_event = context.pointer_event(event);
+        let (settings_flow, settings) =
+            self.settings_button.handle_event(context, event, settings_button, ());
+        let (today_flow, today) =
+            self.today_button.handle_event(context, event, today_button, ());
+        let buttons_consumed = settings_flow == EventFlow::Consumed
+            || today_flow == EventFlow::Consumed;
+        if settings {
+            self.settings
+                .open(context, self.calendar_settings.clone());
+            self.pointer = PointerState::Idle;
+            context.set_cursor(CursorIcon::Default);
+            return EventFlow::Consumed;
+        }
+        if today {
+            let today = Local::now().date_naive();
+            self.navigation = Some(Navigation {
+                target_week: week_start(today),
+                last_tick: context.now,
+            });
+            self.pointer = PointerState::Idle;
+            context.set_cursor(CursorIcon::Default);
+            context.window.request_redraw();
+            return EventFlow::Consumed;
+        }
+        if buttons_consumed {
+            self.navigation = None;
+            self.pointer = PointerState::Idle;
+            if !pointer_event.is_some_and(|(_, _, phase, hover)| {
+                hover && phase == TouchPhase::Moved
+            }) {
+                return EventFlow::Consumed;
+            }
+        }
+        if let Some((pointer, point, phase, hover)) = pointer_event {
+            if hover
+                && let Some(point) = point
+            {
+                self.cursor = point;
+            }
+            match (phase, point) {
+                (TouchPhase::Started, Some(point)) => self.pointer_down(context, pointer, point,
+                    if hover { GestureKind::Mouse } else { GestureKind::Touch }),
+                (TouchPhase::Moved, Some(point)) =>
+                    self.pointer_move(context, pointer, point, hover, buttons_consumed),
+                (TouchPhase::Ended, Some(point)) => {
+                    self.pointer_up(context, pointer, point)
+                }
+                (TouchPhase::Cancelled, _) => {
+                    self.pointer = PointerState::Idle;
+                    context.window.request_redraw();
+                }
+                _ => {}
+            }
+            return match buttons_consumed { true => EventFlow::Consumed, false => EventFlow::NotConsumed };
         }
 
         match event {
@@ -947,46 +955,6 @@ impl Widget<AppContext<'_>, AppEvent> for CalendarWidget {
                     context.window.request_redraw();
                 }
             }
-            Event::Input(InputEvent::CursorMoved { position, .. }) => {
-                self.cursor = position.as_vec2();
-                self.pointer_move(context, MOUSE_POINTER, self.cursor, true);
-            }
-            Event::Input(InputEvent::MouseButton {
-                button: MouseButton::Left,
-                state: ElementState::Pressed,
-                ..
-            }) => {
-                if let Some(point) = context.input.pointer() {
-                    self.cursor = point;
-                }
-                self.pointer_down(context, MOUSE_POINTER, self.cursor, GestureKind::Mouse);
-            }
-            Event::Input(InputEvent::MouseButton {
-                button: MouseButton::Left,
-                state: ElementState::Released,
-                ..
-            }) => {
-                if let Some(point) = context.input.pointer() {
-                    self.cursor = point;
-                }
-                self.pointer_up(context, MOUSE_POINTER, self.cursor);
-            }
-            Event::Input(InputEvent::Touch(touch)) => {
-                let point = touch.position.as_vec2();
-                match touch.phase {
-                    TouchPhase::Started => {
-                        self.pointer_down(context, touch.id, point, GestureKind::Touch)
-                    }
-                    TouchPhase::Moved => self.pointer_move(context, touch.id, point, false),
-                    TouchPhase::Ended => self.pointer_up(context, touch.id, point),
-                    TouchPhase::Cancelled => {
-                        self.pointer = PointerState::Idle;
-                        self.today_button.cancel();
-                        self.settings_button.cancel();
-                        context.window.request_redraw();
-                    }
-                }
-            }
             Event::Input(InputEvent::MouseWheel { delta, .. }) => {
                 let scale = context.scale;
                 let amount = match delta {
@@ -998,8 +966,6 @@ impl Widget<AppContext<'_>, AppEvent> for CalendarWidget {
                 self.navigation = None;
                 self.move_scroll(-amount, row_height);
                 self.pointer = PointerState::Idle;
-                self.today_button.cancel();
-                self.settings_button.cancel();
                 context.set_cursor(CursorIcon::Default);
                 context.window.request_redraw();
             }
@@ -1009,21 +975,21 @@ impl Widget<AppContext<'_>, AppEvent> for CalendarWidget {
             {
                 self.pointer = PointerState::Idle;
                 self.navigation = None;
-                self.today_button.cancel();
-                self.settings_button.cancel();
                 context.set_cursor(CursorIcon::Default);
                 context.window.request_redraw();
             }
             Event::Host(HostEvent::Focused { focused: false }) => {
                 self.pointer = PointerState::Idle;
-                self.today_button.cancel();
-                self.settings_button.cancel();
                 context.set_cursor(CursorIcon::Default);
                 context.window.request_redraw();
             }
             _ => {}
         }
-        EventFlow::NotConsumed
+        if buttons_consumed {
+            EventFlow::Consumed
+        } else {
+            EventFlow::NotConsumed
+        }
     }
 }
 

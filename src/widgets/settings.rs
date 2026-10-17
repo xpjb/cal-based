@@ -1,12 +1,11 @@
 use crate::*;
 use based::{
-    ElementState, Event, EventFlow, HostEvent, InputEvent, Key, MouseButton, NamedKey, TouchPhase,
+    ElementState, Event, EventFlow, HostEvent, InputEvent, Key, NamedKey, TouchPhase,
     Widget,
     glam::{Vec2, Vec4},
     widget::window::CursorIcon,
 };
 
-const MOUSE_POINTER: u64 = u64::MAX;
 const PANEL_BG: Vec4 = Vec4::new(0.075, 0.088, 0.108, 1.0);
 const ROW_STYLE: SurfaceStyle = SurfaceStyle {
     fill: StateColors::new(
@@ -77,7 +76,26 @@ impl DayColorSlot {
     }
 }
 
-#[derive(Clone, Copy)]
+struct DayColorRow(DayColorSlot);
+
+impl ButtonFace<(DayColors, DayColorSlot)> for DayColorRow {
+    fn redraw(&mut self, context: &mut AppContext<'_>, rect: Rect, state: SurfaceState,
+        (colors, selected): (DayColors, DayColorSlot)) {
+        let scale = context.scale;
+        let state = if self.0 == selected { SurfaceState::Dragging } else { state };
+        paint_surface(context, rect, 7.0 * scale, scale, state, ROW_STYLE);
+        let _ = context.text(self.0.label(), rect.inset(12.0 * scale), 13.5 * scale, TEXT,
+            HorizontalAlign::Left, VerticalAlign::Center, false);
+        let chip = Rect::new(rect.right() - 50.0 * scale, rect.position.y + 8.0 * scale,
+            38.0 * scale, rect.size.y - 16.0 * scale);
+        context.surface(chip, 6.0 * scale,
+            if self.0 == selected { 2.0 * scale } else { scale },
+            Vec4::from_array(self.0.color(colors).rgba()),
+            if self.0 == selected { ACCENT } else { GRID });
+    }
+}
+
+#[derive(Clone, Copy, Default)]
 struct SettingsLayout {
     panel: Rect,
     rows: [Rect; 6],
@@ -102,9 +120,9 @@ pub struct SettingsWidget {
     layout: Option<SettingsLayout>,
     cursor: Vec2,
     picker: Option<(u64, PickerTarget)>,
-    rows: [Button; 6],
-    reset_button: Button,
-    done_button: Button,
+    rows: [Button<DayColorRow>; 6],
+    reset_button: Button<TextButton>,
+    done_button: Button<TextButton>,
     error: Option<String>,
 }
 
@@ -119,9 +137,9 @@ impl SettingsWidget {
             layout: None,
             cursor: Vec2::ZERO,
             picker: None,
-            rows: std::array::from_fn(|_| Button::default()),
-            reset_button: Button::default(),
-            done_button: Button::default(),
+            rows: DayColorSlot::ALL.map(|slot| Button::new(DayColorRow(slot))),
+            reset_button: Button::text("Reset", 13.0, NEUTRAL_BUTTON),
+            done_button: Button::text("Done", 13.0, PRIMARY_BUTTON),
             error: None,
         }
     }
@@ -155,11 +173,6 @@ impl SettingsWidget {
                 self.layout = None;
                 self.picker = None;
                 self.error = None;
-                for row in &mut self.rows {
-                    row.cancel();
-                }
-                self.reset_button.cancel();
-                self.done_button.cancel();
                 context.set_cursor(CursorIcon::Default);
             }
             Err(error) => self.error = Some(error.to_string()),
@@ -203,15 +216,6 @@ impl SettingsWidget {
     ) {
         self.cursor = point;
         let mut changed = false;
-        for row in &mut self.rows {
-            changed |= row.pointer_moved(pointer, point, hover_capable);
-        }
-        changed |= self
-            .reset_button
-            .pointer_moved(pointer, point, hover_capable);
-        changed |= self
-            .done_button
-            .pointer_moved(pointer, point, hover_capable);
         if let Some((active, target)) = self.picker
             && active == pointer
         {
@@ -249,12 +253,7 @@ impl SettingsWidget {
             self.close(context);
             return;
         }
-        if self.done_button.press(pointer, point)
-            || self.reset_button.press(pointer, point)
-            || self.rows.iter_mut().any(|row| row.press(pointer, point))
-        {
-            context.window.request_redraw();
-        } else if layout.saturation_value.contains(point) {
+        if layout.saturation_value.contains(point) {
             self.picker = Some((pointer, PickerTarget::SaturationValue));
             self.update_picker(PickerTarget::SaturationValue, point);
             context.window.request_redraw();
@@ -265,34 +264,9 @@ impl SettingsWidget {
         }
     }
 
-    fn pointer_up(&mut self, context: &mut AppContext<'_>, pointer: u64, point: Vec2) {
+    fn pointer_up(&mut self, context: &mut AppContext<'_>, point: Vec2) {
         self.cursor = point;
         self.picker = None;
-        let done = self.done_button.release(pointer, point);
-        let reset = self.reset_button.release(pointer, point);
-        let releases = std::array::from_fn::<_, 6, _>(|index| {
-            self.rows[index].release(pointer, point)
-        });
-        if done == ButtonRelease::Activated {
-            self.close(context);
-            return;
-        }
-        if reset == ButtonRelease::Activated {
-            if let Some(settings) = &mut self.draft {
-                *settings = CalendarSettings::default();
-                let color = self.selected.color(settings.day_colors);
-                (self.hue, self.saturation, self.value) = rgb_to_hsv(color);
-            }
-        } else if let Some(index) = releases
-            .iter()
-            .position(|release| *release == ButtonRelease::Activated)
-        {
-            self.selected = DayColorSlot::ALL[index];
-            if let Some(settings) = &self.draft {
-                let color = self.selected.color(settings.day_colors);
-                (self.hue, self.saturation, self.value) = rgb_to_hsv(color);
-            }
-        }
         context.window.request_redraw();
     }
 }
@@ -302,6 +276,7 @@ impl Widget<AppContext<'_>, AppEvent> for SettingsWidget {
         let Some(settings) = self.draft.clone() else {
             return EventFlow::NotConsumed;
         };
+        let row_data = (settings.day_colors, self.selected);
 
         if matches!(event, Event::Host(HostEvent::RedrawRequested)) {
             if let Some(point) = context.input.pointer() {
@@ -363,14 +338,6 @@ impl Widget<AppContext<'_>, AppEvent> for SettingsWidget {
                 done,
             };
             self.layout = Some(layout);
-            for (button, rect) in self.rows.iter_mut().zip(rows) {
-                button.set_rect(rect);
-                button.set_hover(self.cursor);
-            }
-            self.reset_button.set_rect(reset);
-            self.done_button.set_rect(done);
-            self.reset_button.set_hover(self.cursor);
-            self.done_button.set_hover(self.cursor);
 
             context.quad(
                 Rect::new(0.0, 0.0, viewport.x, viewport.y),
@@ -398,46 +365,8 @@ impl Widget<AppContext<'_>, AppEvent> for SettingsWidget {
                 false,
             );
 
-            for (index, slot) in DayColorSlot::ALL.into_iter().enumerate() {
-                let state = if slot == self.selected {
-                    SurfaceState::Dragging
-                } else {
-                    self.rows[index].state()
-                };
-                paint_surface(
-                    context,
-                    rows[index],
-                    7.0 * scale,
-                    scale,
-                    state,
-                    ROW_STYLE,
-                );
-                let _ = context.text(
-                    slot.label(),
-                    rows[index].inset(12.0 * scale),
-                    13.5 * scale,
-                    TEXT,
-                    HorizontalAlign::Left,
-                    VerticalAlign::Center,
-                    false,
-                );
-                let chip = Rect::new(
-                    rows[index].right() - 50.0 * scale,
-                    rows[index].position.y + 8.0 * scale,
-                    38.0 * scale,
-                    rows[index].size.y - 16.0 * scale,
-                );
-                context.surface(
-                    chip,
-                    6.0 * scale,
-                    if slot == self.selected {
-                        2.0 * scale
-                    } else {
-                        scale
-                    },
-                    Vec4::from_array(slot.color(settings.day_colors).rgba()),
-                    if slot == self.selected { ACCENT } else { GRID },
-                );
+            for (button, rect) in self.rows.iter_mut().zip(rows) {
+                let _ = button.handle_event(context, event, rect, row_data);
             }
 
             let hue_color = Vec4::from_array(hsv_to_rgb(self.hue, 1.0, 1.0).rgba());
@@ -555,50 +484,69 @@ impl Widget<AppContext<'_>, AppEvent> for SettingsWidget {
                     false,
                 );
             }
-            self.reset_button
-                .paint(context, "Reset", 13.0, scale, NEUTRAL_BUTTON);
-            self.done_button
-                .paint(context, "Done", 13.0, scale, PRIMARY_BUTTON);
+            let _ = self.reset_button.handle_event(context, event, reset, ());
+            let _ = self.done_button.handle_event(context, event, done, ());
+            return EventFlow::Consumed;
+        }
+
+        let layout = self.layout.unwrap_or_default();
+        let (done_flow, done) = self.done_button.handle_event(context, event, layout.done, ());
+        let (reset_flow, reset) =
+            self.reset_button.handle_event(context, event, layout.reset, ());
+        let mut buttons_consumed = done_flow == EventFlow::Consumed
+            || reset_flow == EventFlow::Consumed;
+        let mut selected = None;
+        for (index, (row, rect)) in self.rows.iter_mut().zip(layout.rows).enumerate() {
+            let (flow, activated) = row.handle_event(context, event, rect, row_data);
+            if flow == EventFlow::Consumed {
+                buttons_consumed = true;
+            }
+            if activated {
+                selected = Some(index);
+            }
+        }
+        if done {
+            self.close(context);
+            return EventFlow::Consumed;
+        }
+        if reset {
+            if let Some(settings) = &mut self.draft {
+                *settings = CalendarSettings::default();
+                let color = self.selected.color(settings.day_colors);
+                (self.hue, self.saturation, self.value) = rgb_to_hsv(color);
+            }
+            context.window.request_redraw();
+            return EventFlow::Consumed;
+        }
+        if let Some(index) = selected {
+            self.selected = DayColorSlot::ALL[index];
+            if let Some(settings) = &self.draft {
+                let color = self.selected.color(settings.day_colors);
+                (self.hue, self.saturation, self.value) = rgb_to_hsv(color);
+            }
+            context.window.request_redraw();
+            return EventFlow::Consumed;
+        }
+
+        if let Some((pointer, point, phase, hover)) = context.pointer_event(event) {
+            match (phase, point) {
+                (TouchPhase::Started, Some(point)) if !buttons_consumed => {
+                    self.pointer_down(context, pointer, point)
+                }
+                (TouchPhase::Moved, Some(point)) => {
+                    self.pointer_move(context, pointer, point, hover)
+                }
+                (TouchPhase::Ended, Some(point)) => self.pointer_up(context, point),
+                (TouchPhase::Cancelled, _) => {
+                    self.picker = None;
+                    context.window.request_redraw();
+                }
+                _ => {}
+            }
             return EventFlow::Consumed;
         }
 
         match event {
-            Event::Input(InputEvent::CursorMoved { position, .. }) => {
-                self.pointer_move(context, MOUSE_POINTER, position.as_vec2(), true);
-            }
-            Event::Input(InputEvent::MouseButton {
-                button: MouseButton::Left,
-                state: ElementState::Pressed,
-                ..
-            }) => {
-                let point = context.input.pointer().unwrap_or(self.cursor);
-                self.pointer_down(context, MOUSE_POINTER, point);
-            }
-            Event::Input(InputEvent::MouseButton {
-                button: MouseButton::Left,
-                state: ElementState::Released,
-                ..
-            }) => {
-                let point = context.input.pointer().unwrap_or(self.cursor);
-                self.pointer_up(context, MOUSE_POINTER, point);
-            }
-            Event::Input(InputEvent::Touch(touch)) => {
-                let point = touch.position.as_vec2();
-                match touch.phase {
-                    TouchPhase::Started => self.pointer_down(context, touch.id, point),
-                    TouchPhase::Moved => self.pointer_move(context, touch.id, point, false),
-                    TouchPhase::Ended => self.pointer_up(context, touch.id, point),
-                    TouchPhase::Cancelled => {
-                        self.picker = None;
-                        for row in &mut self.rows {
-                            row.cancel();
-                        }
-                        self.reset_button.cancel();
-                        self.done_button.cancel();
-                        context.window.request_redraw();
-                    }
-                }
-            }
             Event::Input(InputEvent::Keyboard(key))
                 if key.state == ElementState::Pressed
                     && matches!(key.logical_key, Key::Named(NamedKey::Escape)) =>
@@ -607,11 +555,6 @@ impl Widget<AppContext<'_>, AppEvent> for SettingsWidget {
             }
             Event::Host(HostEvent::Focused { focused: false }) => {
                 self.picker = None;
-                for row in &mut self.rows {
-                    row.cancel();
-                }
-                self.reset_button.cancel();
-                self.done_button.cancel();
                 context.set_cursor(CursorIcon::Default);
                 context.window.request_redraw();
             }

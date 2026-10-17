@@ -1,5 +1,8 @@
 use crate::*;
-use based::glam::{Vec2, Vec4};
+use based::{
+    ElementState, Event, EventFlow, HostEvent, InputEvent, Key, NamedKey, TouchPhase,
+    glam::Vec4,
+};
 
 #[derive(Clone, Copy)]
 pub struct ButtonStyle {
@@ -69,119 +72,125 @@ pub const DANGER_BUTTON: ButtonStyle = ButtonStyle {
     border_width: 1.0,
 };
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ButtonRelease {
-    Ignored,
-    Cancelled,
-    Activated,
+pub trait ButtonFace<D> {
+    fn redraw(&mut self, context: &mut AppContext<'_>, rect: Rect, state: SurfaceState, data: D);
 }
 
-#[derive(Default)]
-pub struct Button {
-    rect: Rect,
+pub struct TextButton {
+    label: &'static str,
+    size: f32,
+    style: ButtonStyle,
+}
+
+impl ButtonFace<()> for TextButton {
+    fn redraw(&mut self, context: &mut AppContext<'_>, rect: Rect, state: SurfaceState, (): ()) {
+        let scale = context.scale;
+        paint_surface(context, rect, self.style.radius * scale, self.style.border_width * scale,
+            state, self.style.surface);
+        let _ = context.text(self.label, rect, self.size * scale, self.style.text,
+            HorizontalAlign::Center, VerticalAlign::Center, false);
+    }
+}
+
+pub struct Button<W> {
+    face: W,
     hovered: bool,
-    active_pointer: Option<u64>,
-    active_inside: bool,
+    active: Option<(u64, bool)>,
 }
 
-impl Button {
-    pub fn set_rect(&mut self, rect: Rect) {
-        self.rect = rect;
+impl<W> Button<W> {
+    pub const fn new(face: W) -> Self {
+        Self { face, hovered: false, active: None }
     }
 
-    pub fn rect(&self) -> Rect {
-        self.rect
-    }
-
-    pub fn contains(&self, point: Vec2) -> bool {
-        self.rect.contains(point)
-    }
-
-    pub fn set_hover(&mut self, point: Vec2) -> bool {
-        let before = self.state();
-        self.hovered = self.rect.contains(point);
-        before != self.state()
-    }
-
-    pub fn pointer_moved(&mut self, pointer: u64, point: Vec2, hover_capable: bool) -> bool {
-        let before = self.state();
-        if hover_capable {
-            self.hovered = self.rect.contains(point);
-        }
-        if self.active_pointer == Some(pointer) {
-            self.active_inside = self.rect.contains(point);
-        }
-        before != self.state()
-    }
-
-    pub fn press(&mut self, pointer: u64, point: Vec2) -> bool {
-        if !self.rect.contains(point) {
-            return false;
-        }
-        self.active_pointer = Some(pointer);
-        self.active_inside = true;
-        true
-    }
-
-    pub fn release(&mut self, pointer: u64, point: Vec2) -> ButtonRelease {
-        if self.active_pointer != Some(pointer) {
-            return ButtonRelease::Ignored;
-        }
-        let activated = self.active_inside && self.rect.contains(point);
-        self.active_pointer = None;
-        self.active_inside = false;
-        if activated {
-            ButtonRelease::Activated
-        } else {
-            ButtonRelease::Cancelled
+    fn state(&self) -> SurfaceState {
+        match (self.active, self.hovered) {
+            (Some((_, true)), _) => SurfaceState::Pressed,
+            (None, true) => SurfaceState::Hovered,
+            _ => SurfaceState::Idle,
         }
     }
 
-    pub fn cancel(&mut self) -> bool {
-        let changed = self.active_pointer.is_some();
-        self.active_pointer = None;
-        self.active_inside = false;
-        changed
+    fn reset(&mut self) {
+        self.active = None;
     }
 
-    pub fn state(&self) -> SurfaceState {
-        if self.active_pointer.is_some() {
-            if self.active_inside {
-                SurfaceState::Pressed
-            } else {
-                SurfaceState::Idle
-            }
-        } else if self.hovered {
-            SurfaceState::Hovered
-        } else {
-            SurfaceState::Idle
-        }
-    }
-
-    pub fn paint(
-        &self,
+    #[must_use]
+    pub fn handle_event<D>(
+        &mut self,
         context: &mut AppContext<'_>,
-        label: &str,
-        text_size: f32,
-        scale: f32,
-        style: ButtonStyle,
-    ) {
-        paint_surface(
-            context,
-            self.rect,
-            style.radius * scale,
-            style.border_width * scale,
-            self.state(),
-            style.surface,
-        );
-        let _ = context.text(
-            label,
-            self.rect,
-            text_size * scale,
-            style.text,
-            HorizontalAlign::Center,
-            VerticalAlign::Center,
-            false,
-        );
+        event: &AppEvent,
+        rect: Rect,
+        data: D,
+    ) -> (EventFlow, bool)
+    where W: ButtonFace<D>
+    {
+        let before = self.state();
+        if matches!(event, Event::Host(HostEvent::RedrawRequested)) {
+            if self.active.is_none() {
+                self.hovered = context.input.pointer().is_some_and(|point| rect.contains(point));
+            }
+            self.face.redraw(context, rect, self.state(), data);
+            return (EventFlow::NotConsumed, false);
+        }
+        let cancelled = match event {
+            Event::Host(HostEvent::Focused { focused: false }) => {
+                self.hovered = false;
+                true
+            }
+            Event::Input(InputEvent::MouseWheel { .. }) => true,
+            Event::Input(InputEvent::Keyboard(key)) => key.state == ElementState::Pressed
+                && matches!(key.logical_key, Key::Named(NamedKey::Escape)),
+            _ => false,
+        };
+        if cancelled {
+            self.reset();
+            if before != self.state() {
+                context.window.request_redraw();
+            }
+            return (EventFlow::NotConsumed, false);
+        }
+        let Some((pointer, point, phase, hover)) = context.pointer_event(event) else {
+            return (EventFlow::NotConsumed, false);
+        };
+        let inside = point.is_some_and(|point| rect.contains(point));
+        if hover {
+            self.hovered = inside;
+        }
+        let (consumed, activated) = match phase {
+            TouchPhase::Started if inside && self.active.is_none() => {
+                self.active = Some((pointer, true));
+                (true, false)
+            }
+            TouchPhase::Moved if self.active.is_some_and(|(active, _)| active == pointer) => {
+                self.active = Some((pointer, inside));
+                (true, false)
+            }
+            TouchPhase::Moved if hover && inside => (true, false),
+            TouchPhase::Ended if self.active.is_some_and(|(active, _)| active == pointer) => {
+                let activated = self.active.is_some_and(|(_, active_inside)| active_inside && inside);
+                self.reset();
+                if !hover {
+                    self.hovered = false;
+                }
+                (true, activated)
+            }
+            TouchPhase::Cancelled if self.active.is_some_and(|(active, _)| active == pointer) => {
+                self.reset();
+                self.hovered = false;
+                (true, false)
+            }
+            _ => (false, false),
+        };
+        if before != self.state() {
+            context.window.request_redraw();
+        }
+        (match consumed { true => EventFlow::Consumed, false => EventFlow::NotConsumed }, activated)
+    }
+}
+
+impl Button<TextButton> {
+    pub const fn text(label: &'static str, size: f32, style: ButtonStyle) -> Self {
+        Self::new(TextButton { label, size, style })
     }
 }
