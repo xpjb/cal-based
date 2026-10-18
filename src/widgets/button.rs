@@ -50,7 +50,7 @@ where
                     .app
                     .input
                     .pointer()
-                    .is_some_and(|point| context.rect.contains(point));
+                    .is_some_and(|point| context.app.hit_test(context.rect, point));
             }
         } else {
             let cancelled = match event {
@@ -66,7 +66,7 @@ where
             if cancelled {
                 self.reset();
             } else if let Some((pointer, point, phase, hover)) = context.app.pointer_event(event) {
-                let inside = point.is_some_and(|point| context.rect.contains(point));
+                let inside = point.is_some_and(|point| context.app.hit_test(context.rect, point));
                 if hover {
                     self.hovered = inside;
                 }

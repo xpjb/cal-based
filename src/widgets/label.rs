@@ -34,7 +34,7 @@ impl<T: AsRef<str>> Label<T> {
         let size = self.size * context.scale;
         if let Some(frame) = context.frame.as_deref_mut() {
             frame.text(context.text, self.text.as_ref(), rect, size, self.color,
-                self.horizontal, self.vertical, self.wrap);
+                self.horizontal, self.vertical, self.wrap, context.clip);
         }
     }
 }

@@ -58,6 +58,7 @@ pub struct AppContext<'a> {
     viewport: UVec2,
     scale: f32,
     now: Instant,
+    clip: Rect,
     frame: Option<&'a mut FrameCanvas>,
     next_wake: &'a mut Option<Instant>,
 }
@@ -95,15 +96,19 @@ impl AppContext<'_> {
         self.window.set_cursor(cursor);
     }
 
+    fn hit_test(&self, rect: Rect, point: Vec2) -> bool {
+        self.clip.contains(point) && rect.contains(point)
+    }
+
     fn quad(&mut self, rect: Rect, color: Vec4) {
         if let Some(frame) = self.frame.as_deref_mut() {
-            frame.quad(rect, color);
+            frame.quad(rect, color, self.clip);
         }
     }
 
     fn rounded_rect(&mut self, rect: Rect, radius: f32, color: Vec4) {
         if let Some(frame) = self.frame.as_deref_mut() {
-            frame.rounded_rect(rect, radius, color);
+            frame.rounded_rect(rect, radius, color, self.clip);
         }
     }
 
@@ -116,13 +121,13 @@ impl AppContext<'_> {
         border: Vec4,
     ) {
         if let Some(frame) = self.frame.as_deref_mut() {
-            frame.surface(rect, radius, border_width, fill, border);
+            frame.surface(rect, radius, border_width, fill, border, self.clip);
         }
     }
 
     fn gradient(&mut self, rect: Rect, colors: [Vec4; 4]) {
         if let Some(frame) = self.frame.as_deref_mut() {
-            frame.gradient(rect, colors);
+            frame.gradient(rect, colors, self.clip);
         }
     }
 
@@ -134,7 +139,9 @@ impl AppContext<'_> {
         color: Vec4,
         clip: Rect,
     ) {
-        if let Some(frame) = self.frame.as_deref_mut() {
+        if let Some(clip) = clip.intersection(self.clip)
+            && let Some(frame) = self.frame.as_deref_mut()
+        {
             frame.draw_text(handle, origin, size, color, clip);
         }
     }
@@ -159,14 +166,16 @@ impl App {
     ) -> (EventFlow, Option<Instant>) {
         let _ = self.input.handle_event(&mut (), event);
         let mut next_wake = None;
+        let viewport = self.gpu.size();
         let mut context = AppContext {
             window: &self.window,
             input: &self.input,
             state: &mut self.state,
             text: &mut self.text,
-            viewport: self.gpu.size(),
+            viewport,
             scale: (self.window.scale_factor() as f32).clamp(1.0, 3.0),
             now: Instant::now(),
+            clip: Rect::new(0.0, 0.0, viewport.x as f32, viewport.y as f32),
             frame,
             next_wake: &mut next_wake,
         };

@@ -34,7 +34,9 @@ impl Rect {
     }
 
     pub fn contains(self, point: Vec2) -> bool {
-        point.cmpge(self.position).all() && point.cmple(self.position + self.size).all()
+        self.size.cmpgt(Vec2::ZERO).all()
+            && point.cmpge(self.position).all()
+            && point.cmple(self.position + self.size).all()
     }
 
     pub fn inset(self, amount: f32) -> Self {
@@ -79,12 +81,12 @@ struct Vertex {
 }
 
 enum PaintCommand {
-    Surfaces { first: u32, vertices: u32 },
+    Surfaces { first: u32, vertices: u32, clip: Rect },
     Text(text::Draw),
 }
 
 enum PreparedCommand {
-    Surfaces { first: u32, vertices: u32 },
+    Surfaces { first: u32, vertices: u32, clip: Rect },
     Text(text::Batch),
 }
 
@@ -103,12 +105,12 @@ impl FrameCanvas {
         }
     }
 
-    pub fn quad(&mut self, rect: Rect, color: Vec4) {
-        self.push_rect(rect, 0.0, 0.0, [color; 4], Vec4::ZERO);
+    pub fn quad(&mut self, rect: Rect, color: Vec4, clip: Rect) {
+        self.push_rect(rect, 0.0, 0.0, [color; 4], Vec4::ZERO, clip);
     }
 
-    pub fn rounded_rect(&mut self, rect: Rect, radius: f32, color: Vec4) {
-        self.push_rect(rect, radius, 0.0, [color; 4], Vec4::ZERO);
+    pub fn rounded_rect(&mut self, rect: Rect, radius: f32, color: Vec4, clip: Rect) {
+        self.push_rect(rect, radius, 0.0, [color; 4], Vec4::ZERO, clip);
     }
 
     pub fn surface(
@@ -118,12 +120,13 @@ impl FrameCanvas {
         border_width: f32,
         fill: Vec4,
         border: Vec4,
+        clip: Rect,
     ) {
-        self.push_rect(rect, radius, border_width, [fill; 4], border);
+        self.push_rect(rect, radius, border_width, [fill; 4], border, clip);
     }
 
-    pub fn gradient(&mut self, rect: Rect, colors: [Vec4; 4]) {
-        self.push_rect(rect, 0.0, 0.0, colors, Vec4::ZERO);
+    pub fn gradient(&mut self, rect: Rect, colors: [Vec4; 4], clip: Rect) {
+        self.push_rect(rect, 0.0, 0.0, colors, Vec4::ZERO, clip);
     }
 
     fn push_rect(
@@ -133,9 +136,11 @@ impl FrameCanvas {
         border_width: f32,
         fill: [Vec4; 4],
         border: Vec4,
+        clip: Rect,
     ) {
         if rect.size.x <= 0.0
             || rect.size.y <= 0.0
+            || rect.intersection(clip).is_none()
             || (fill.iter().all(|color| color.w <= 0.0) && border.w <= 0.0)
         {
             return;
@@ -159,7 +164,7 @@ impl FrameCanvas {
         let min = center - extent;
         let max = center + extent;
         let viewport = self.viewport.as_vec2().max(Vec2::ONE);
-        let clip = |point: Vec2| {
+        let to_clip_space = |point: Vec2| {
             point / viewport * Vec2::new(2.0, -2.0) + Vec2::new(-1.0, 1.0)
         };
         let first = self.vertices.len() as u32;
@@ -181,7 +186,7 @@ impl FrameCanvas {
         ];
         self.vertices
             .extend(corners.into_iter().map(|(position, local, fill)| Vertex {
-                position: clip(position).to_array(),
+                position: to_clip_space(position).to_array(),
                 local: local.to_array(),
                 half_size: half_size.to_array(),
                 radius,
@@ -192,12 +197,14 @@ impl FrameCanvas {
         if let Some(PaintCommand::Surfaces {
             first: previous,
             vertices,
+            clip: previous_clip,
         }) = self.commands.last_mut()
             && *previous + *vertices == first
+            && *previous_clip == clip
         {
             *vertices += 6;
         } else {
-            self.commands.push(PaintCommand::Surfaces { first, vertices: 6 });
+            self.commands.push(PaintCommand::Surfaces { first, vertices: 6, clip });
         }
     }
 
@@ -211,7 +218,11 @@ impl FrameCanvas {
         horizontal: HorizontalAlign,
         vertical: VerticalAlign,
         wrap: bool,
+        clip: Rect,
     ) {
+        let Some(clip) = rect.intersection(clip) else {
+            return;
+        };
         if content.is_empty() || rect.size.x <= 0.0 || rect.size.y <= 0.0 || size <= 0.0 {
             return;
         }
@@ -249,10 +260,10 @@ impl FrameCanvas {
             size,
             color: text::Color(color.to_array()),
             clip: Some(text::Rect::new(
-                rect.position.x,
-                rect.position.y,
-                rect.size.x,
-                rect.size.y,
+                clip.position.x,
+                clip.position.y,
+                clip.size.x,
+                clip.size.y,
             )),
             ..Default::default()
         }));
@@ -324,8 +335,8 @@ impl Renderer {
         let mut index = 0;
         while index < canvas.commands.len() {
             match canvas.commands[index] {
-                PaintCommand::Surfaces { first, vertices } => {
-                    prepared.push(PreparedCommand::Surfaces { first, vertices });
+                PaintCommand::Surfaces { first, vertices, clip } => {
+                    prepared.push(PreparedCommand::Surfaces { first, vertices, clip });
                     index += 1;
                 }
                 PaintCommand::Text(_) => {
@@ -368,10 +379,31 @@ impl Renderer {
             multiview_mask: None,
         });
         let viewport = canvas.viewport;
+        let scissor = |x: f32, y: f32, width: f32, height: f32| {
+            let left = x.max(0.0).floor() as u32;
+            let top = y.max(0.0).floor() as u32;
+            let right = (x + width)
+                .min(viewport.x as f32)
+                .ceil()
+                .max(left as f32) as u32;
+            let bottom = (y + height)
+                .min(viewport.y as f32)
+                .ceil()
+                .max(top as f32) as u32;
+            (right > left && bottom > top).then_some((left, top, right - left, bottom - top))
+        };
         for command in prepared {
             match command {
-                PreparedCommand::Surfaces { first, vertices } => {
-                    pass.set_scissor_rect(0, 0, viewport.x.max(1), viewport.y.max(1));
+                PreparedCommand::Surfaces { first, vertices, clip } => {
+                    let Some((x, y, width, height)) = scissor(
+                        clip.position.x,
+                        clip.position.y,
+                        clip.size.x,
+                        clip.size.y,
+                    ) else {
+                        continue;
+                    };
+                    pass.set_scissor_rect(x, y, width, height);
                     pass.set_pipeline(&self.pipeline);
                     pass.set_vertex_buffer(0, self.buffer.slice(..));
                     pass.draw(first..first + vertices, 0..1);
@@ -379,20 +411,12 @@ impl Renderer {
                 PreparedCommand::Text(batch) => {
                     for (segment_index, segment) in batch.segments().iter().enumerate() {
                         if let Some(clip) = segment.clip {
-                            let x = clip.x.max(0.0).floor() as u32;
-                            let y = clip.y.max(0.0).floor() as u32;
-                            let right = (clip.x + clip.width)
-                                .min(viewport.x as f32)
-                                .ceil()
-                                .max(x as f32) as u32;
-                            let bottom = (clip.y + clip.height)
-                                .min(viewport.y as f32)
-                                .ceil()
-                                .max(y as f32) as u32;
-                            if right == x || bottom == y {
+                            let Some((x, y, width, height)) =
+                                scissor(clip.x, clip.y, clip.width, clip.height)
+                            else {
                                 continue;
-                            }
-                            pass.set_scissor_rect(x, y, right - x, bottom - y);
+                            };
+                            pass.set_scissor_rect(x, y, width, height);
                         } else {
                             pass.set_scissor_rect(0, 0, viewport.x.max(1), viewport.y.max(1));
                         }
