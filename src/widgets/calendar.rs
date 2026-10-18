@@ -829,18 +829,16 @@ impl Widget<AppContext<'_>, AppEvent> for CalendarWidget {
             }
             {
                 let mut button_context = ViewContext {
-                    app: context,
+                    parent: &mut *context,
                     rect: settings_button,
-                    parent: (),
                 };
                 let _ = self.settings_button.handle_event(&mut button_context, event);
             }
             let _ = std::mem::take(&mut self.settings_button.activated);
             {
                 let mut button_context = ViewContext {
-                    app: context,
+                    parent: &mut *context,
                     rect: today_button,
-                    parent: (),
                 };
                 let _ = self.today_button.handle_event(&mut button_context, event);
             }
@@ -861,18 +859,16 @@ impl Widget<AppContext<'_>, AppEvent> for CalendarWidget {
         let pointer_event = context.pointer_event(event);
         let settings_flow = {
             let mut button_context = ViewContext {
-                app: context,
+                parent: &mut *context,
                 rect: settings_button,
-                parent: (),
             };
             self.settings_button.handle_event(&mut button_context, event)
         };
         let settings = std::mem::take(&mut self.settings_button.activated);
         let today_flow = {
             let mut button_context = ViewContext {
-                app: context,
+                parent: &mut *context,
                 rect: today_button,
-                parent: (),
             };
             self.today_button.handle_event(&mut button_context, event)
         };

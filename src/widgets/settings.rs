@@ -4,6 +4,7 @@ use based::{
     Widget,
     glam::{Vec2, Vec4},
 };
+use std::ops::{Deref, DerefMut};
 
 const PANEL_BG: Vec4 = Vec4::new(0.075, 0.088, 0.108, 1.0);
 const ROW_BUTTON: ButtonStyle = ButtonStyle {
@@ -80,17 +81,37 @@ impl DayColorSlot {
     }
 }
 
+struct DayColorContext<ParentContext> {
+    parent: ParentContext,
+    colors: DayColors,
+    selected: DayColorSlot,
+}
+
+impl<ParentContext> Deref for DayColorContext<ParentContext> {
+    type Target = ParentContext;
+
+    fn deref(&self) -> &Self::Target {
+        &self.parent
+    }
+}
+
+impl<ParentContext> DerefMut for DayColorContext<ParentContext> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.parent
+    }
+}
+
 struct DayColorRow(DayColorSlot);
 
-impl Widget<ViewContext<'_, '_, ButtonContext<&mut (DayColors, DayColorSlot)>>, AppEvent>
-    for DayColorRow
+impl Widget<
+    ButtonContext<&mut ViewContext<DayColorContext<&mut AppContext<'_>>>>,
+    AppEvent,
+> for DayColorRow
 {
     fn handle_event(
         &mut self,
-        context: &mut ViewContext<
-            '_,
-            '_,
-            ButtonContext<&mut (DayColors, DayColorSlot)>,
+        context: &mut ButtonContext<
+            &mut ViewContext<DayColorContext<&mut AppContext<'_>>>,
         >,
         event: &AppEvent,
     ) -> EventFlow {
@@ -98,28 +119,29 @@ impl Widget<ViewContext<'_, '_, ButtonContext<&mut (DayColors, DayColorSlot)>>, 
             return EventFlow::NotConsumed;
         }
         let rect = context.rect;
-        let (colors, selected) = *context.parent.parent;
-        let scale = context.app.scale;
+        let colors = context.colors;
+        let selected = context.selected;
+        let scale = context.scale;
         let state = if self.0 == selected {
             SurfaceState::Dragging
-        } else if context.parent.pressed {
+        } else if context.pressed {
             SurfaceState::Pressed
-        } else if context.parent.hovered {
+        } else if context.hovered {
             SurfaceState::Hovered
         } else {
             SurfaceState::Idle
         };
-        paint_surface(context.app, rect, ROW_BUTTON.radius * scale,
+        paint_surface(context, rect, ROW_BUTTON.radius * scale,
             ROW_BUTTON.border_width * scale, state, ROW_BUTTON.surface);
         Label::new(self.0.label(), 13.5, ROW_BUTTON.text)
-            .paint(context.app, rect.inset(12.0 * scale));
+            .paint(context, rect.inset(12.0 * scale));
         let chip = Rect::new(
             rect.right() - 50.0 * scale,
             rect.position.y + 8.0 * scale,
             38.0 * scale,
             rect.size.y - 16.0 * scale,
         );
-        context.app.surface(
+        context.surface(
             chip,
             6.0 * scale,
             if self.0 == selected { 2.0 * scale } else { scale },
@@ -397,7 +419,14 @@ impl Widget<AppContext<'_>, AppEvent> for SettingsWidget {
 
             for (button, rect) in self.rows.iter_mut().zip(rows) {
                 {
-                    let mut button_context = ViewContext { app: context, rect, parent: row_data };
+                    let mut button_context = ViewContext {
+                        parent: DayColorContext {
+                            parent: &mut *context,
+                            colors: row_data.0,
+                            selected: row_data.1,
+                        },
+                        rect,
+                    };
                     let _ = button.handle_event(&mut button_context, event);
                 }
                 let _ = std::mem::take(&mut button.activated);
@@ -509,12 +538,12 @@ impl Widget<AppContext<'_>, AppEvent> for SettingsWidget {
                 );
             }
             {
-                let mut button_context = ViewContext { app: context, rect: reset, parent: () };
+                let mut button_context = ViewContext { parent: &mut *context, rect: reset };
                 let _ = self.reset_button.handle_event(&mut button_context, event);
             }
             let _ = std::mem::take(&mut self.reset_button.activated);
             {
-                let mut button_context = ViewContext { app: context, rect: done, parent: () };
+                let mut button_context = ViewContext { parent: &mut *context, rect: done };
                 let _ = self.done_button.handle_event(&mut button_context, event);
             }
             let _ = std::mem::take(&mut self.done_button.activated);
@@ -523,12 +552,12 @@ impl Widget<AppContext<'_>, AppEvent> for SettingsWidget {
 
         let layout = self.layout.unwrap_or_default();
         let done_flow = {
-            let mut button_context = ViewContext { app: context, rect: layout.done, parent: () };
+            let mut button_context = ViewContext { parent: &mut *context, rect: layout.done };
             self.done_button.handle_event(&mut button_context, event)
         };
         let done = std::mem::take(&mut self.done_button.activated);
         let reset_flow = {
-            let mut button_context = ViewContext { app: context, rect: layout.reset, parent: () };
+            let mut button_context = ViewContext { parent: &mut *context, rect: layout.reset };
             self.reset_button.handle_event(&mut button_context, event)
         };
         let reset = std::mem::take(&mut self.reset_button.activated);
@@ -537,7 +566,14 @@ impl Widget<AppContext<'_>, AppEvent> for SettingsWidget {
         let mut selected = None;
         for (index, (row, rect)) in self.rows.iter_mut().zip(layout.rows).enumerate() {
             let flow = {
-                let mut button_context = ViewContext { app: context, rect, parent: row_data };
+                let mut button_context = ViewContext {
+                    parent: DayColorContext {
+                        parent: &mut *context,
+                        colors: row_data.0,
+                        selected: row_data.1,
+                    },
+                    rect,
+                };
                 row.handle_event(&mut button_context, event)
             };
             let activated = std::mem::take(&mut row.activated);

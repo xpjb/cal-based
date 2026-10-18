@@ -39,15 +39,14 @@ impl<T: AsRef<str>> Label<T> {
     }
 }
 
-impl<T: AsRef<str>, ParentContext> Widget<ViewContext<'_, '_, ParentContext>, AppEvent>
-    for Label<T>
-{
+impl<T: AsRef<str>> Widget<ViewContext<&mut AppContext<'_>>, AppEvent> for Label<T> {
     fn handle_event(
         &mut self,
-        context: &mut ViewContext<'_, '_, ParentContext>,
+        context: &mut ViewContext<&mut AppContext<'_>>,
         _event: &AppEvent,
     ) -> EventFlow {
-        self.paint(context.app, context.rect);
+        let rect = context.rect;
+        self.paint(context, rect);
         EventFlow::NotConsumed
     }
 }

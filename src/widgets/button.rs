@@ -2,11 +2,26 @@ use crate::*;
 use based::{
     ElementState, Event, EventFlow, HostEvent, InputEvent, Key, NamedKey, TouchPhase, Widget,
 };
+use std::ops::{Deref, DerefMut};
 
 pub struct ButtonContext<ParentContext> {
     pub parent: ParentContext,
     pub hovered: bool,
     pub pressed: bool,
+}
+
+impl<ParentContext> Deref for ButtonContext<ParentContext> {
+    type Target = ParentContext;
+
+    fn deref(&self) -> &Self::Target {
+        &self.parent
+    }
+}
+
+impl<ParentContext> DerefMut for ButtonContext<ParentContext> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.parent
+    }
 }
 
 pub struct Button<W> {
@@ -30,14 +45,14 @@ impl<W> Button<W> {
     }
 }
 
-impl<W, ParentContext> Widget<ViewContext<'_, '_, ParentContext>, AppEvent> for Button<W>
+impl<W, ParentContext> Widget<ViewContext<ParentContext>, AppEvent> for Button<W>
 where
-    for<'a, 'b> W:
-        Widget<ViewContext<'a, 'b, ButtonContext<&'a mut ParentContext>>, AppEvent>,
+    ParentContext: AppContextChain,
+    for<'a> W: Widget<ButtonContext<&'a mut ViewContext<ParentContext>>, AppEvent>,
 {
     fn handle_event(
         &mut self,
-        context: &mut ViewContext<'_, '_, ParentContext>,
+        context: &mut ViewContext<ParentContext>,
         event: &AppEvent,
     ) -> EventFlow {
         let before = (self.hovered, self.pressed());
@@ -47,9 +62,7 @@ where
         if redraw {
             if self.active.is_none() {
                 self.hovered = context
-                    .app
-                    .input
-                    .pointer()
+                    .with_app(|app| app.input.pointer())
                     .is_some_and(|point| context.rect.contains(point));
             }
         } else {
@@ -65,7 +78,9 @@ where
             };
             if cancelled {
                 self.reset();
-            } else if let Some((pointer, point, phase, hover)) = context.app.pointer_event(event) {
+            } else if let Some((pointer, point, phase, hover)) =
+                context.with_app(|app| app.pointer_event(event))
+            {
                 let inside = point.is_some_and(|point| context.rect.contains(point));
                 if hover {
                     self.hovered = inside;
@@ -111,16 +126,12 @@ where
 
         let pressed = self.pressed();
         if !redraw && before != (self.hovered, pressed) {
-            context.app.window.request_redraw();
+            context.with_app(|app| app.window.request_redraw());
         }
-        let mut child_context = ViewContext {
-            app: &mut *context.app,
-            rect: context.rect,
-            parent: ButtonContext {
-                parent: &mut context.parent,
-                hovered: self.hovered,
-                pressed,
-            },
+        let mut child_context = ButtonContext {
+            parent: context,
+            hovered: self.hovered,
+            pressed,
         };
         let child_flow = self.child.handle_event(&mut child_context, event);
         if consumed || child_flow == EventFlow::Consumed {

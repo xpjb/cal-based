@@ -1,5 +1,6 @@
 use crate::*;
 use based::glam::Vec4;
+use std::ops::{Deref, DerefMut};
 
 pub const BACKGROUND: Vec4 = Vec4::new(0.035, 0.043, 0.055, 1.0);
 pub const GRID: Vec4 = Vec4::new(0.15, 0.175, 0.21, 1.0);
@@ -16,10 +17,43 @@ pub enum SurfaceState {
     Dragging,
 }
 
-pub struct ViewContext<'a, 'b, ParentContext> {
-    pub app: &'a mut AppContext<'b>,
-    pub rect: Rect,
+pub trait AppContextChain {
+    fn with_app<R>(&mut self, use_app: impl FnOnce(&mut AppContext<'_>) -> R) -> R;
+}
+
+impl AppContextChain for AppContext<'_> {
+    fn with_app<R>(&mut self, use_app: impl FnOnce(&mut AppContext<'_>) -> R) -> R {
+        use_app(self)
+    }
+}
+
+impl<Context> AppContextChain for Context
+where
+    Context: DerefMut,
+    Context::Target: AppContextChain,
+{
+    fn with_app<R>(&mut self, use_app: impl FnOnce(&mut AppContext<'_>) -> R) -> R {
+        self.deref_mut().with_app(use_app)
+    }
+}
+
+pub struct ViewContext<ParentContext> {
     pub parent: ParentContext,
+    pub rect: Rect,
+}
+
+impl<ParentContext> Deref for ViewContext<ParentContext> {
+    type Target = ParentContext;
+
+    fn deref(&self) -> &Self::Target {
+        &self.parent
+    }
+}
+
+impl<ParentContext> DerefMut for ViewContext<ParentContext> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.parent
+    }
 }
 
 #[derive(Clone, Copy)]

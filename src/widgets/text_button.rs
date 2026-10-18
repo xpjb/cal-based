@@ -81,35 +81,33 @@ impl TextButton {
     }
 }
 
-impl<ParentContext>
-    Widget<ViewContext<'_, '_, ButtonContext<&mut ParentContext>>, AppEvent> for TextButton
-{
+impl Widget<ButtonContext<&mut ViewContext<&mut AppContext<'_>>>, AppEvent> for TextButton {
     fn handle_event(
         &mut self,
-        context: &mut ViewContext<'_, '_, ButtonContext<&mut ParentContext>>,
+        context: &mut ButtonContext<&mut ViewContext<&mut AppContext<'_>>>,
         event: &AppEvent,
     ) -> EventFlow {
         if !matches!(event, Event::Host(HostEvent::RedrawRequested)) {
             return EventFlow::NotConsumed;
         }
-        let state = if context.parent.pressed {
+        let state = if context.pressed {
             SurfaceState::Pressed
-        } else if context.parent.hovered {
+        } else if context.hovered {
             SurfaceState::Hovered
         } else {
             SurfaceState::Idle
         };
         let rect = context.rect;
-        let scale = context.app.scale;
+        let scale = context.scale;
         paint_surface(
-            context.app,
+            context,
             rect,
             self.style.radius * scale,
             self.style.border_width * scale,
             state,
             self.style.surface,
         );
-        Label::centered(self.label, self.size, self.style.text).paint(context.app, rect);
+        Label::centered(self.label, self.size, self.style.text).paint(context, rect);
         EventFlow::NotConsumed
     }
 }
