@@ -42,7 +42,7 @@ impl DayWidget {
 
     pub fn paint_background(
         &self,
-        context: &mut AppContext<'_>,
+        context: &mut AppServices<'_>,
         rect: Rect,
         today: NaiveDate,
         colors: DayColors,
@@ -92,7 +92,7 @@ impl DayWidget {
 
     pub fn paint_interaction(
         &self,
-        context: &mut AppContext<'_>,
+        context: &mut AppServices<'_>,
         rect: Rect,
         state: SurfaceState,
         scale: f32,
@@ -115,7 +115,7 @@ impl DayWidget {
 
     pub fn paint_text(
         &self,
-        context: &mut AppContext<'_>,
+        context: &mut AppServices<'_>,
         cell: Rect,
         today: NaiveDate,
         scale: f32,
@@ -164,8 +164,8 @@ impl DayWidget {
     }
 }
 
-impl Widget<AppContext<'_>, AppEvent> for DayWidget {
-    fn handle_event(&mut self, _context: &mut AppContext<'_>, event: &AppEvent) -> EventFlow {
+impl Widget<AppServices<'_>, AppEvent> for DayWidget {
+    fn handle_event(&mut self, _context: &mut AppServices<'_>, event: &AppEvent) -> EventFlow {
         let Event::User(StateEvent::Value { key, result, .. }) = event else {
             return EventFlow::NotConsumed;
         };

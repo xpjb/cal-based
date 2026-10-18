@@ -162,7 +162,7 @@ impl CalendarWidget {
 
     fn pointer_down(
         &mut self,
-        context: &mut AppContext<'_>,
+        context: &mut AppServices<'_>,
         pointer: u64,
         point: Vec2,
         kind: GestureKind,
@@ -183,7 +183,7 @@ impl CalendarWidget {
 
     fn pointer_move(
         &mut self,
-        context: &mut AppContext<'_>,
+        context: &mut AppServices<'_>,
         pointer: u64,
         point: Vec2,
         hover_capable: bool,
@@ -293,7 +293,7 @@ impl CalendarWidget {
         context.window.request_redraw();
     }
 
-    fn pointer_up(&mut self, context: &mut AppContext<'_>, pointer: u64, point: Vec2) {
+    fn pointer_up(&mut self, context: &mut AppServices<'_>, pointer: u64, point: Vec2) {
         let state = std::mem::replace(&mut self.pointer, PointerState::Idle);
         match state {
             PointerState::Pressed {
@@ -392,8 +392,8 @@ impl CalendarWidget {
     }
 }
 
-impl Widget<AppContext<'_>, AppEvent> for CalendarWidget {
-    fn handle_event(&mut self, context: &mut AppContext<'_>, event: &AppEvent) -> EventFlow {
+impl Widget<AppServices<'_>, AppEvent> for CalendarWidget {
+    fn handle_event(&mut self, context: &mut AppServices<'_>, event: &AppEvent) -> EventFlow {
         let viewport = context.viewport.as_vec2();
         let scale = context.scale;
         let today_button = Rect::new(

@@ -60,7 +60,7 @@ impl EditorWidget {
 
     fn open(
         &mut self,
-        context: &mut AppContext<'_>,
+        context: &mut AppServices<'_>,
         target: EditorTarget,
         description: String,
     ) {
@@ -76,14 +76,14 @@ impl EditorWidget {
 
     pub fn open_day(
         &mut self,
-        context: &mut AppContext<'_>,
+        context: &mut AppServices<'_>,
         date: NaiveDate,
         description: String,
     ) {
         self.open(context, EditorTarget::Day(date), description);
     }
 
-    pub fn open_event(&mut self, context: &mut AppContext<'_>, event: CalendarEvent) {
+    pub fn open_event(&mut self, context: &mut AppServices<'_>, event: CalendarEvent) {
         self.open(
             context,
             EditorTarget::Event {
@@ -95,7 +95,7 @@ impl EditorWidget {
         );
     }
 
-    fn close(&mut self, context: &mut AppContext<'_>) {
+    fn close(&mut self, context: &mut AppServices<'_>) {
         self.session = None;
         self.layout = None;
         context.window.set_ime_allowed(false);
@@ -103,7 +103,7 @@ impl EditorWidget {
         context.window.request_redraw();
     }
 
-    fn save(&mut self, context: &mut AppContext<'_>) {
+    fn save(&mut self, context: &mut AppServices<'_>) {
         let Some(session) = &self.session else {
             return;
         };
@@ -126,8 +126,8 @@ impl EditorWidget {
     }
 }
 
-impl Widget<AppContext<'_>, AppEvent> for EditorWidget {
-    fn handle_event(&mut self, context: &mut AppContext<'_>, event: &AppEvent) -> EventFlow {
+impl Widget<AppServices<'_>, AppEvent> for EditorWidget {
+    fn handle_event(&mut self, context: &mut AppServices<'_>, event: &AppEvent) -> EventFlow {
         if self.session.is_none() {
             return EventFlow::NotConsumed;
         }

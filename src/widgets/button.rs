@@ -47,7 +47,7 @@ impl<W> Button<W> {
 
 impl<W, ParentContext> Widget<ViewContext<ParentContext>, AppEvent> for Button<W>
 where
-    ParentContext: AppContextChain,
+    ParentContext: AppContext,
     for<'a> W: Widget<ButtonContext<&'a mut ViewContext<ParentContext>>, AppEvent>,
 {
     fn handle_event(
@@ -62,7 +62,7 @@ where
         if redraw {
             if self.active.is_none() {
                 self.hovered = context
-                    .with_app(|app| app.input.pointer())
+                    .pointer()
                     .is_some_and(|point| context.rect.contains(point));
             }
         } else {
@@ -79,7 +79,7 @@ where
             if cancelled {
                 self.reset();
             } else if let Some((pointer, point, phase, hover)) =
-                context.with_app(|app| app.pointer_event(event))
+                context.pointer_event(event)
             {
                 let inside = point.is_some_and(|point| context.rect.contains(point));
                 if hover {
@@ -126,7 +126,7 @@ where
 
         let pressed = self.pressed();
         if !redraw && before != (self.hovered, pressed) {
-            context.with_app(|app| app.window.request_redraw());
+            context.request_redraw();
         }
         let mut child_context = ButtonContext {
             parent: context,

@@ -46,7 +46,7 @@ use directories::ProjectDirs;
 
 pub type AppEvent = Event<StateEvent>;
 
-pub struct AppContext<'a> {
+pub struct AppServices<'a> {
     window: &'a Window,
     input: &'a Input,
     state: &'a mut dyn StateClient<
@@ -62,7 +62,7 @@ pub struct AppContext<'a> {
     next_wake: &'a mut Option<Instant>,
 }
 
-impl AppContext<'_> {
+impl AppServices<'_> {
     fn pointer_event(&self, event: &AppEvent) -> Option<(u64, Option<Vec2>, TouchPhase, bool)> {
         Some(match event {
             Event::Input(InputEvent::CursorMoved { position, .. }) =>
@@ -159,7 +159,7 @@ impl App {
     ) -> (EventFlow, Option<Instant>) {
         let _ = self.input.handle_event(&mut (), event);
         let mut next_wake = None;
-        let mut context = AppContext {
+        let mut context = AppServices {
             window: &self.window,
             input: &self.input,
             state: &mut self.state,

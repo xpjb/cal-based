@@ -104,7 +104,7 @@ pub struct TextContent {
 }
 
 impl TextContent {
-    fn shape(&mut self, context: &mut AppContext<'_>) -> Option<text::ShapedHandle> {
+    fn shape(&mut self, context: &mut AppServices<'_>) -> Option<text::ShapedHandle> {
         let layout = self.layout?;
         let text_origin = Vec2::new(12.0, 11.0) * layout.scale;
         if self.edit.is_empty() {
@@ -129,7 +129,7 @@ impl TextContent {
 
     fn place_at_cursor(
         &mut self,
-        context: &mut AppContext<'_>,
+        context: &mut AppServices<'_>,
         select: bool,
         click_count: u8,
     ) {
@@ -176,7 +176,7 @@ impl TextContent {
         context.window.request_redraw();
     }
 
-    fn keep_caret_visible(&mut self, context: &mut AppContext<'_>, edited: bool) {
+    fn keep_caret_visible(&mut self, context: &mut AppServices<'_>, edited: bool) {
         let Some(layout) = self.layout else {
             return;
         };
@@ -207,8 +207,8 @@ impl ScrollContent for TextContent {
     }
 }
 
-impl Widget<AppContext<'_>, AppEvent> for TextContent {
-    fn handle_event(&mut self, context: &mut AppContext<'_>, event: &AppEvent) -> EventFlow {
+impl Widget<AppServices<'_>, AppEvent> for TextContent {
+    fn handle_event(&mut self, context: &mut AppServices<'_>, event: &AppEvent) -> EventFlow {
         if let Event::Input(InputEvent::CursorMoved { position, .. }) = event {
             self.cursor = position.as_vec2();
         } else if let Some(pointer) = context.input.pointer() {

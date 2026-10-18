@@ -90,11 +90,11 @@ impl<W: ScrollContent> Scroll<W> {
     }
 }
 
-impl<W> Widget<AppContext<'_>, AppEvent> for Scroll<W>
+impl<W> Widget<AppServices<'_>, AppEvent> for Scroll<W>
 where
-    W: ScrollContent + for<'context> Widget<AppContext<'context>, AppEvent>,
+    W: ScrollContent + for<'context> Widget<AppServices<'context>, AppEvent>,
 {
-    fn handle_event(&mut self, context: &mut AppContext<'_>, event: &AppEvent) -> EventFlow {
+    fn handle_event(&mut self, context: &mut AppServices<'_>, event: &AppEvent) -> EventFlow {
         self.clamp_offset();
         let waiting = matches!(event, Event::Host(HostEvent::AboutToWait));
 

@@ -162,7 +162,7 @@ impl EventStrip {
 
     pub fn paint_surface(
         &self,
-        context: &mut AppContext<'_>,
+        context: &mut AppServices<'_>,
         state: SurfaceState,
         handle_states: [SurfaceState; 2],
         scale: f32,
@@ -212,7 +212,7 @@ impl EventStrip {
         }
     }
 
-    pub fn paint_text(&self, context: &mut AppContext<'_>, scale: f32) {
+    pub fn paint_text(&self, context: &mut AppServices<'_>, scale: f32) {
         if self.description.is_empty() {
             return;
         }
@@ -222,8 +222,8 @@ impl EventStrip {
     }
 }
 
-impl Widget<AppContext<'_>, AppEvent> for CalendarEvent {
-    fn handle_event(&mut self, _context: &mut AppContext<'_>, event: &AppEvent) -> EventFlow {
+impl Widget<AppServices<'_>, AppEvent> for CalendarEvent {
+    fn handle_event(&mut self, _context: &mut AppServices<'_>, event: &AppEvent) -> EventFlow {
         if let Event::User(StateEvent::Value {
             key: CalendarKey::Event(id),
             result: Ok(CalendarValue::Event(Some(event))),

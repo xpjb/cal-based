@@ -1,5 +1,8 @@
 use crate::*;
-use based::glam::Vec4;
+use based::{
+    TouchPhase,
+    glam::{Vec2, Vec4},
+};
 use std::ops::{Deref, DerefMut};
 
 pub const BACKGROUND: Vec4 = Vec4::new(0.035, 0.043, 0.055, 1.0);
@@ -17,25 +20,67 @@ pub enum SurfaceState {
     Dragging,
 }
 
-pub trait AppContextChain {
-    fn with_app<R>(&mut self, use_app: impl FnOnce(&mut AppContext<'_>) -> R) -> R;
+pub trait AppInput {
+    fn pointer(&self) -> Option<Vec2>;
+    fn pointer_event(
+        &self,
+        event: &AppEvent,
+    ) -> Option<(u64, Option<Vec2>, TouchPhase, bool)>;
 }
 
-impl AppContextChain for AppContext<'_> {
-    fn with_app<R>(&mut self, use_app: impl FnOnce(&mut AppContext<'_>) -> R) -> R {
-        use_app(self)
+impl AppInput for AppServices<'_> {
+    fn pointer(&self) -> Option<Vec2> {
+        self.input.pointer()
+    }
+
+    fn pointer_event(
+        &self,
+        event: &AppEvent,
+    ) -> Option<(u64, Option<Vec2>, TouchPhase, bool)> {
+        AppServices::pointer_event(self, event)
     }
 }
 
-impl<Context> AppContextChain for Context
+impl<Context> AppInput for Context
 where
-    Context: DerefMut,
-    Context::Target: AppContextChain,
+    Context: Deref,
+    Context::Target: AppInput,
 {
-    fn with_app<R>(&mut self, use_app: impl FnOnce(&mut AppContext<'_>) -> R) -> R {
-        self.deref_mut().with_app(use_app)
+    fn pointer(&self) -> Option<Vec2> {
+        self.deref().pointer()
+    }
+
+    fn pointer_event(
+        &self,
+        event: &AppEvent,
+    ) -> Option<(u64, Option<Vec2>, TouchPhase, bool)> {
+        self.deref().pointer_event(event)
     }
 }
+
+pub trait AppWindow {
+    fn request_redraw(&self);
+}
+
+impl AppWindow for AppServices<'_> {
+    fn request_redraw(&self) {
+        self.window.request_redraw();
+    }
+}
+
+impl<Context> AppWindow for Context
+where
+    Context: Deref,
+    Context::Target: AppWindow,
+{
+    fn request_redraw(&self) {
+        self.deref().request_redraw();
+    }
+}
+
+pub trait AppContext: AppInput + AppWindow {}
+
+impl<Context> AppContext for Context where Context: AppInput + AppWindow {}
 
 pub struct ViewContext<ParentContext> {
     pub parent: ParentContext,
@@ -91,7 +136,7 @@ pub struct SurfaceStyle {
 }
 
 pub fn paint_surface(
-    context: &mut AppContext<'_>,
+    context: &mut AppServices<'_>,
     rect: Rect,
     radius: f32,
     border_width: f32,

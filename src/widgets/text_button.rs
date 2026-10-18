@@ -81,10 +81,10 @@ impl TextButton {
     }
 }
 
-impl Widget<ButtonContext<&mut ViewContext<&mut AppContext<'_>>>, AppEvent> for TextButton {
+impl Widget<ButtonContext<&mut ViewContext<&mut AppServices<'_>>>, AppEvent> for TextButton {
     fn handle_event(
         &mut self,
-        context: &mut ButtonContext<&mut ViewContext<&mut AppContext<'_>>>,
+        context: &mut ButtonContext<&mut ViewContext<&mut AppServices<'_>>>,
         event: &AppEvent,
     ) -> EventFlow {
         if !matches!(event, Event::Host(HostEvent::RedrawRequested)) {

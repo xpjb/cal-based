@@ -104,14 +104,14 @@ impl<ParentContext> DerefMut for DayColorContext<ParentContext> {
 struct DayColorRow(DayColorSlot);
 
 impl Widget<
-    ButtonContext<&mut ViewContext<DayColorContext<&mut AppContext<'_>>>>,
+    ButtonContext<&mut ViewContext<DayColorContext<&mut AppServices<'_>>>>,
     AppEvent,
 > for DayColorRow
 {
     fn handle_event(
         &mut self,
         context: &mut ButtonContext<
-            &mut ViewContext<DayColorContext<&mut AppContext<'_>>>,
+            &mut ViewContext<DayColorContext<&mut AppServices<'_>>>,
         >,
         event: &AppEvent,
     ) -> EventFlow {
@@ -207,7 +207,7 @@ impl SettingsWidget {
 
     pub fn open(
         &mut self,
-        context: &mut AppContext<'_>,
+        context: &mut AppServices<'_>,
         settings: CalendarSettings,
     ) {
         let color = self.selected.color(settings.day_colors);
@@ -217,7 +217,7 @@ impl SettingsWidget {
         context.window.request_redraw();
     }
 
-    fn close(&mut self, context: &mut AppContext<'_>) {
+    fn close(&mut self, context: &mut AppServices<'_>) {
         let Some(settings) = self.draft.clone() else {
             return;
         };
@@ -266,7 +266,7 @@ impl SettingsWidget {
 
     fn pointer_move(
         &mut self,
-        context: &mut AppContext<'_>,
+        context: &mut AppServices<'_>,
         pointer: u64,
         point: Vec2,
         hover_capable: bool,
@@ -301,7 +301,7 @@ impl SettingsWidget {
         }
     }
 
-    fn pointer_down(&mut self, context: &mut AppContext<'_>, pointer: u64, point: Vec2) {
+    fn pointer_down(&mut self, context: &mut AppServices<'_>, pointer: u64, point: Vec2) {
         self.cursor = point;
         let Some(layout) = self.layout else {
             return;
@@ -321,15 +321,15 @@ impl SettingsWidget {
         }
     }
 
-    fn pointer_up(&mut self, context: &mut AppContext<'_>, point: Vec2) {
+    fn pointer_up(&mut self, context: &mut AppServices<'_>, point: Vec2) {
         self.cursor = point;
         self.picker = None;
         context.window.request_redraw();
     }
 }
 
-impl Widget<AppContext<'_>, AppEvent> for SettingsWidget {
-    fn handle_event(&mut self, context: &mut AppContext<'_>, event: &AppEvent) -> EventFlow {
+impl Widget<AppServices<'_>, AppEvent> for SettingsWidget {
+    fn handle_event(&mut self, context: &mut AppServices<'_>, event: &AppEvent) -> EventFlow {
         let Some(settings) = self.draft.clone() else {
             return EventFlow::NotConsumed;
         };
