@@ -1,8 +1,5 @@
 use crate::*;
-use std::{
-    ops::{Deref, DerefMut, Range},
-    time::Duration,
-};
+use std::{ops::Range, time::Duration};
 
 use based::{
     Event, EventFlow, HostEvent, InputEvent, ScrollDelta, Widget,
@@ -15,26 +12,13 @@ const DRAG_MAX_STEP: f32 = 0.05;
 const DRAG_RATE: f32 = 0.05;
 
 pub struct ScrollContext<ParentContext> {
-    parent: ParentContext,
+    #[expect(dead_code, reason = "preserves the outer widget context")]
+    pub parent: ParentContext,
     pub viewport: Rect,
     pub content_height: f32,
     pub reveal: Option<Range<f32>>,
     pub drag_y: Option<f32>,
     pub scrolled: bool,
-}
-
-impl<ParentContext> Deref for ScrollContext<ParentContext> {
-    type Target = ParentContext;
-
-    fn deref(&self) -> &Self::Target {
-        &self.parent
-    }
-}
-
-impl<ParentContext> DerefMut for ScrollContext<ParentContext> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.parent
-    }
 }
 
 pub struct Scroll<W> {
