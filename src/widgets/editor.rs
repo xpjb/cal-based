@@ -37,9 +37,9 @@ pub struct EditorWidget {
     session: Option<Session>,
     layout: Option<EditorLayout>,
     cursor: Vec2,
-    save_button: Button<Label<&'static str>>,
-    cancel_button: Button<Label<&'static str>>,
-    delete_button: Button<Label<&'static str>>,
+    save_button: Button<TextButton>,
+    cancel_button: Button<TextButton>,
+    delete_button: Button<TextButton>,
 }
 
 impl EditorWidget {
@@ -48,12 +48,9 @@ impl EditorWidget {
             session: None,
             layout: None,
             cursor: Vec2::ZERO,
-            save_button: Button::new(
-                Label::centered("Save", 13.0, PRIMARY_BUTTON.text), PRIMARY_BUTTON),
-            cancel_button: Button::new(
-                Label::centered("Cancel", 13.0, NEUTRAL_BUTTON.text), NEUTRAL_BUTTON),
-            delete_button: Button::new(
-                Label::centered("Delete", 13.0, DANGER_BUTTON.text), DANGER_BUTTON),
+            save_button: Button::new(TextButton::new("Save", 13.0, PRIMARY_BUTTON)),
+            cancel_button: Button::new(TextButton::new("Cancel", 13.0, NEUTRAL_BUTTON)),
+            delete_button: Button::new(TextButton::new("Delete", 13.0, DANGER_BUTTON)),
         }
     }
 
@@ -256,23 +253,42 @@ impl Widget<AppContext<'_>, AppEvent> for EditorWidget {
                     .paint(context, footer);
             }
 
-            let _ = self.cancel_button.handle_event(context, event, cancel, ());
-            let _ = self.save_button.handle_event(context, event, save, ());
-            if let Some(delete) = delete {
-                let _ = self.delete_button.handle_event(context, event, delete, ());
+            {
+                let mut button_context = ViewContext { app: context, rect: cancel, parent: () };
+                let _ = self.cancel_button.handle_event(&mut button_context, event);
             }
+            let _ = std::mem::take(&mut self.cancel_button.activated);
+            {
+                let mut button_context = ViewContext { app: context, rect: save, parent: () };
+                let _ = self.save_button.handle_event(&mut button_context, event);
+            }
+            let _ = std::mem::take(&mut self.save_button.activated);
+            if let Some(delete) = delete {
+                let mut button_context = ViewContext { app: context, rect: delete, parent: () };
+                let _ = self.delete_button.handle_event(&mut button_context, event);
+            }
+            let _ = std::mem::take(&mut self.delete_button.activated);
             return EventFlow::Consumed;
         }
 
         let layout = self.layout.unwrap_or_default();
-        let (save_flow, save) = self.save_button.handle_event(context, event, layout.save, ());
-        let (cancel_flow, cancel) =
-            self.cancel_button.handle_event(context, event, layout.cancel, ());
-        let (delete_flow, delete) = if let Some(rect) = layout.delete {
-            self.delete_button.handle_event(context, event, rect, ())
-        } else {
-            (EventFlow::NotConsumed, false)
+        let save_flow = {
+            let mut button_context = ViewContext { app: context, rect: layout.save, parent: () };
+            self.save_button.handle_event(&mut button_context, event)
         };
+        let save = std::mem::take(&mut self.save_button.activated);
+        let cancel_flow = {
+            let mut button_context = ViewContext { app: context, rect: layout.cancel, parent: () };
+            self.cancel_button.handle_event(&mut button_context, event)
+        };
+        let cancel = std::mem::take(&mut self.cancel_button.activated);
+        let delete_flow = if let Some(rect) = layout.delete {
+            let mut button_context = ViewContext { app: context, rect, parent: () };
+            self.delete_button.handle_event(&mut button_context, event)
+        } else {
+            EventFlow::NotConsumed
+        };
+        let delete = std::mem::take(&mut self.delete_button.activated);
         let buttons_consumed = save_flow == EventFlow::Consumed
             || cancel_flow == EventFlow::Consumed
             || delete_flow == EventFlow::Consumed;

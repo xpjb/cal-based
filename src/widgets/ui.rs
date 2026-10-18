@@ -16,10 +16,10 @@ pub enum SurfaceState {
     Dragging,
 }
 
-pub struct ViewContext<'a, 'b, D> {
+pub struct ViewContext<'a, 'b, ParentContext> {
     pub app: &'a mut AppContext<'b>,
     pub rect: Rect,
-    pub data: D,
+    pub parent: ParentContext,
 }
 
 #[derive(Clone, Copy)]

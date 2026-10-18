@@ -82,19 +82,35 @@ impl DayColorSlot {
 
 struct DayColorRow(DayColorSlot);
 
-impl Widget<ViewContext<'_, '_, (DayColors, DayColorSlot)>, AppEvent> for DayColorRow {
+impl Widget<ViewContext<'_, '_, ButtonContext<&mut (DayColors, DayColorSlot)>>, AppEvent>
+    for DayColorRow
+{
     fn handle_event(
         &mut self,
-        context: &mut ViewContext<'_, '_, (DayColors, DayColorSlot)>,
-        _event: &AppEvent,
+        context: &mut ViewContext<
+            '_,
+            '_,
+            ButtonContext<&mut (DayColors, DayColorSlot)>,
+        >,
+        event: &AppEvent,
     ) -> EventFlow {
-        let rect = context.rect;
-        let (colors, selected) = context.data;
-        let scale = context.app.scale;
-        if self.0 == selected {
-            paint_surface(context.app, rect, ROW_BUTTON.radius * scale,
-                ROW_BUTTON.border_width * scale, SurfaceState::Dragging, ROW_BUTTON.surface);
+        if !matches!(event, Event::Host(HostEvent::RedrawRequested)) {
+            return EventFlow::NotConsumed;
         }
+        let rect = context.rect;
+        let (colors, selected) = *context.parent.parent;
+        let scale = context.app.scale;
+        let state = if self.0 == selected {
+            SurfaceState::Dragging
+        } else if context.parent.pressed {
+            SurfaceState::Pressed
+        } else if context.parent.hovered {
+            SurfaceState::Hovered
+        } else {
+            SurfaceState::Idle
+        };
+        paint_surface(context.app, rect, ROW_BUTTON.radius * scale,
+            ROW_BUTTON.border_width * scale, state, ROW_BUTTON.surface);
         Label::new(self.0.label(), 13.5, ROW_BUTTON.text)
             .paint(context.app, rect.inset(12.0 * scale));
         let chip = Rect::new(
@@ -140,8 +156,8 @@ pub struct SettingsWidget {
     cursor: Vec2,
     picker: Option<(u64, PickerTarget)>,
     rows: [Button<DayColorRow>; 6],
-    reset_button: Button<Label<&'static str>>,
-    done_button: Button<Label<&'static str>>,
+    reset_button: Button<TextButton>,
+    done_button: Button<TextButton>,
     error: Option<String>,
 }
 
@@ -156,11 +172,9 @@ impl SettingsWidget {
             layout: None,
             cursor: Vec2::ZERO,
             picker: None,
-            rows: DayColorSlot::ALL.map(|slot| Button::new(DayColorRow(slot), ROW_BUTTON)),
-            reset_button: Button::new(
-                Label::centered("Reset", 13.0, NEUTRAL_BUTTON.text), NEUTRAL_BUTTON),
-            done_button: Button::new(
-                Label::centered("Done", 13.0, PRIMARY_BUTTON.text), PRIMARY_BUTTON),
+            rows: DayColorSlot::ALL.map(|slot| Button::new(DayColorRow(slot))),
+            reset_button: Button::new(TextButton::new("Reset", 13.0, NEUTRAL_BUTTON)),
+            done_button: Button::new(TextButton::new("Done", 13.0, PRIMARY_BUTTON)),
             error: None,
         }
     }
@@ -382,7 +396,11 @@ impl Widget<AppContext<'_>, AppEvent> for SettingsWidget {
             );
 
             for (button, rect) in self.rows.iter_mut().zip(rows) {
-                let _ = button.handle_event(context, event, rect, row_data);
+                {
+                    let mut button_context = ViewContext { app: context, rect, parent: row_data };
+                    let _ = button.handle_event(&mut button_context, event);
+                }
+                let _ = std::mem::take(&mut button.activated);
             }
 
             let hue_color = Vec4::from_array(hsv_to_rgb(self.hue, 1.0, 1.0).rgba());
@@ -490,20 +508,39 @@ impl Widget<AppContext<'_>, AppEvent> for SettingsWidget {
                     ),
                 );
             }
-            let _ = self.reset_button.handle_event(context, event, reset, ());
-            let _ = self.done_button.handle_event(context, event, done, ());
+            {
+                let mut button_context = ViewContext { app: context, rect: reset, parent: () };
+                let _ = self.reset_button.handle_event(&mut button_context, event);
+            }
+            let _ = std::mem::take(&mut self.reset_button.activated);
+            {
+                let mut button_context = ViewContext { app: context, rect: done, parent: () };
+                let _ = self.done_button.handle_event(&mut button_context, event);
+            }
+            let _ = std::mem::take(&mut self.done_button.activated);
             return EventFlow::Consumed;
         }
 
         let layout = self.layout.unwrap_or_default();
-        let (done_flow, done) = self.done_button.handle_event(context, event, layout.done, ());
-        let (reset_flow, reset) =
-            self.reset_button.handle_event(context, event, layout.reset, ());
+        let done_flow = {
+            let mut button_context = ViewContext { app: context, rect: layout.done, parent: () };
+            self.done_button.handle_event(&mut button_context, event)
+        };
+        let done = std::mem::take(&mut self.done_button.activated);
+        let reset_flow = {
+            let mut button_context = ViewContext { app: context, rect: layout.reset, parent: () };
+            self.reset_button.handle_event(&mut button_context, event)
+        };
+        let reset = std::mem::take(&mut self.reset_button.activated);
         let mut buttons_consumed = done_flow == EventFlow::Consumed
             || reset_flow == EventFlow::Consumed;
         let mut selected = None;
         for (index, (row, rect)) in self.rows.iter_mut().zip(layout.rows).enumerate() {
-            let (flow, activated) = row.handle_event(context, event, rect, row_data);
+            let flow = {
+                let mut button_context = ViewContext { app: context, rect, parent: row_data };
+                row.handle_event(&mut button_context, event)
+            };
+            let activated = std::mem::take(&mut row.activated);
             if flow == EventFlow::Consumed {
                 buttons_consumed = true;
             }

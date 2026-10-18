@@ -119,8 +119,8 @@ pub struct CalendarWidget {
     pointer: PointerState,
     cursor: Vec2,
     hits: HitMap,
-    today_button: Button<Label<&'static str>>,
-    settings_button: Button<Label<&'static str>>,
+    today_button: Button<TextButton>,
+    settings_button: Button<TextButton>,
     settings: SettingsWidget,
     editor: EditorWidget,
 }
@@ -141,10 +141,12 @@ impl CalendarWidget {
             pointer: PointerState::Idle,
             cursor: Vec2::ZERO,
             hits: HitMap::default(),
-            today_button: Button::new(
-                Label::centered("Today", 14.0, PRIMARY_BUTTON.text), PRIMARY_BUTTON),
-            settings_button: Button::new(
-                Label::centered("Settings", 14.0, NEUTRAL_BUTTON.text), NEUTRAL_BUTTON),
+            today_button: Button::new(TextButton::new("Today", 14.0, PRIMARY_BUTTON)),
+            settings_button: Button::new(TextButton::new(
+                "Settings",
+                14.0,
+                NEUTRAL_BUTTON,
+            )),
             settings: SettingsWidget::new(),
             editor: EditorWidget::new(),
         }
@@ -825,8 +827,24 @@ impl Widget<AppContext<'_>, AppEvent> for CalendarWidget {
                     ),
                 );
             }
-            let _ = self.settings_button.handle_event(context, event, settings_button, ());
-            let _ = self.today_button.handle_event(context, event, today_button, ());
+            {
+                let mut button_context = ViewContext {
+                    app: context,
+                    rect: settings_button,
+                    parent: (),
+                };
+                let _ = self.settings_button.handle_event(&mut button_context, event);
+            }
+            let _ = std::mem::take(&mut self.settings_button.activated);
+            {
+                let mut button_context = ViewContext {
+                    app: context,
+                    rect: today_button,
+                    parent: (),
+                };
+                let _ = self.today_button.handle_event(&mut button_context, event);
+            }
+            let _ = std::mem::take(&mut self.today_button.activated);
 
             let _ = self.editor.handle_event(context, event);
             let _ = self.settings.handle_event(context, event);
@@ -841,10 +859,24 @@ impl Widget<AppContext<'_>, AppEvent> for CalendarWidget {
         }
 
         let pointer_event = context.pointer_event(event);
-        let (settings_flow, settings) =
-            self.settings_button.handle_event(context, event, settings_button, ());
-        let (today_flow, today) =
-            self.today_button.handle_event(context, event, today_button, ());
+        let settings_flow = {
+            let mut button_context = ViewContext {
+                app: context,
+                rect: settings_button,
+                parent: (),
+            };
+            self.settings_button.handle_event(&mut button_context, event)
+        };
+        let settings = std::mem::take(&mut self.settings_button.activated);
+        let today_flow = {
+            let mut button_context = ViewContext {
+                app: context,
+                rect: today_button,
+                parent: (),
+            };
+            self.today_button.handle_event(&mut button_context, event)
+        };
+        let today = std::mem::take(&mut self.today_button.activated);
         let buttons_consumed = settings_flow == EventFlow::Consumed
             || today_flow == EventFlow::Consumed;
         if settings {

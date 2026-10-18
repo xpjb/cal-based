@@ -10,6 +10,7 @@ mod sanscale;
 mod scroll;
 mod settings;
 mod text_area;
+mod text_button;
 mod text_edit;
 mod ui;
 
@@ -25,6 +26,7 @@ pub use sanscale::*;
 pub use scroll::*;
 pub use settings::*;
 pub use text_area::*;
+pub use text_button::*;
 pub use ui::*;
 
 use crate::*;
