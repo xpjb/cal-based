@@ -25,9 +25,10 @@ struct Session {
     error: Option<String>,
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 struct EditorLayout {
     panel: Rect,
+    text: Rect,
     save: Rect,
     cancel: Rect,
     delete: Option<Rect>,
@@ -35,7 +36,6 @@ struct EditorLayout {
 
 pub struct EditorWidget {
     session: Option<Session>,
-    layout: Option<EditorLayout>,
     cursor: Vec2,
     save_button: Button<TextButton>,
     cancel_button: Button<TextButton>,
@@ -46,7 +46,6 @@ impl EditorWidget {
     pub fn new() -> Self {
         Self {
             session: None,
-            layout: None,
             cursor: Vec2::ZERO,
             save_button: Button::new(TextButton::new("Save", 13.0, PRIMARY_BUTTON)),
             cancel_button: Button::new(TextButton::new("Cancel", 13.0, NEUTRAL_BUTTON)),
@@ -66,10 +65,9 @@ impl EditorWidget {
     ) {
         self.session = Some(Session {
             target,
-            text: Scroll::new(TextContent::new(&description, context.now)),
+            text: Scroll::new(TextContent::new(&description, context.now), 48.0),
             error: None,
         });
-        self.layout = None;
         context.window.set_ime_allowed(true);
         context.window.request_redraw();
     }
@@ -97,7 +95,6 @@ impl EditorWidget {
 
     fn close(&mut self, context: &mut AppContext<'_>) {
         self.session = None;
-        self.layout = None;
         context.window.set_ime_allowed(false);
         context.set_cursor(CursorIcon::Default);
         context.window.request_redraw();
@@ -128,60 +125,59 @@ impl EditorWidget {
 
 impl Widget<AppContext<'_>, AppEvent> for EditorWidget {
     fn handle_event(&mut self, context: &mut AppContext<'_>, event: &AppEvent) -> EventFlow {
-        if self.session.is_none() {
+        let Some(target) = self.session.as_ref().map(|session| session.target) else {
             return EventFlow::NotConsumed;
-        }
+        };
+        let viewport = context.viewport.as_vec2();
+        let scale = context.scale;
+        let panel_width = (viewport.x - 48.0 * scale)
+            .min(760.0 * scale)
+            .max(420.0 * scale);
+        let panel_height = (viewport.y - 48.0 * scale)
+            .min(620.0 * scale)
+            .max(420.0 * scale);
+        let panel = Rect::new(
+            (viewport.x - panel_width) * 0.5,
+            (viewport.y - panel_height) * 0.5,
+            panel_width,
+            panel_height,
+        );
+        let text_rect = Rect::new(
+            panel.position.x + 24.0 * scale,
+            panel.position.y + 104.0 * scale,
+            panel.size.x - 48.0 * scale,
+            panel.size.y - 184.0 * scale,
+        );
+        let save = Rect::new(
+            panel.right() - 124.0 * scale,
+            panel.bottom() - 62.0 * scale,
+            100.0 * scale,
+            40.0 * scale,
+        );
+        let cancel = Rect::new(
+            save.position.x - 112.0 * scale,
+            save.position.y,
+            100.0 * scale,
+            40.0 * scale,
+        );
+        let delete = matches!(target, EditorTarget::Event { .. }).then_some(Rect::new(
+            panel.position.x + 24.0 * scale,
+            save.position.y,
+            100.0 * scale,
+            40.0 * scale,
+        ));
+        let layout = EditorLayout {
+            panel,
+            text: text_rect,
+            save,
+            cancel,
+            delete,
+        };
 
         if matches!(event, Event::Host(HostEvent::RedrawRequested)) {
             if let Some(point) = context.input.pointer() {
                 self.cursor = point;
             }
-            let viewport = context.viewport.as_vec2();
-            let scale = context.scale;
-            let panel_width = (viewport.x - 48.0 * scale)
-                .min(760.0 * scale)
-                .max(420.0 * scale);
-            let panel_height = (viewport.y - 48.0 * scale)
-                .min(620.0 * scale)
-                .max(420.0 * scale);
-            let panel = Rect::new(
-                (viewport.x - panel_width) * 0.5,
-                (viewport.y - panel_height) * 0.5,
-                panel_width,
-                panel_height,
-            );
-            let text_rect = Rect::new(
-                panel.position.x + 24.0 * scale,
-                panel.position.y + 104.0 * scale,
-                panel.size.x - 48.0 * scale,
-                panel.size.y - 184.0 * scale,
-            );
-            let save = Rect::new(
-                panel.right() - 124.0 * scale,
-                panel.bottom() - 62.0 * scale,
-                100.0 * scale,
-                40.0 * scale,
-            );
-            let cancel = Rect::new(
-                save.position.x - 112.0 * scale,
-                save.position.y,
-                100.0 * scale,
-                40.0 * scale,
-            );
-            let target = self.session.as_ref().expect("checked above").target;
-            let delete = matches!(target, EditorTarget::Event { .. }).then_some(Rect::new(
-                panel.position.x + 24.0 * scale,
-                save.position.y,
-                100.0 * scale,
-                40.0 * scale,
-            ));
-            self.layout = Some(EditorLayout {
-                panel,
-                save,
-                cancel,
-                delete,
-            });
-
             context.quad(
                 Rect::new(0.0, 0.0, viewport.x, viewport.y),
                 Vec4::new(0.0, 0.0, 0.0, 0.72),
@@ -234,8 +230,10 @@ impl Widget<AppContext<'_>, AppEvent> for EditorWidget {
             );
 
             if let Some(session) = &mut self.session {
-                session.text.set_rect(text_rect, scale);
-                let _ = session.text.handle_event(context, event);
+                let _ = session.text.handle_event(
+                    &mut ViewContext { app: context, rect: text_rect, parent: () },
+                    event,
+                );
             }
 
             let footer = Rect::new(
@@ -271,7 +269,6 @@ impl Widget<AppContext<'_>, AppEvent> for EditorWidget {
             return EventFlow::Consumed;
         }
 
-        let layout = self.layout.unwrap_or_default();
         let save_flow = {
             let mut button_context = ViewContext { app: context, rect: layout.save, parent: () };
             self.save_button.handle_event(&mut button_context, event)
@@ -336,7 +333,10 @@ impl Widget<AppContext<'_>, AppEvent> for EditorWidget {
         match event {
             Event::Host(HostEvent::Focused { focused: false }) => {
                 if let Some(session) = &mut self.session {
-                    let _ = session.text.handle_event(context, event);
+                    let _ = session.text.handle_event(
+                        &mut ViewContext { app: context, rect: layout.text, parent: () },
+                        event,
+                    );
                 }
                 context.set_cursor(CursorIcon::Default);
                 context.window.request_redraw();
@@ -344,7 +344,10 @@ impl Widget<AppContext<'_>, AppEvent> for EditorWidget {
             Event::Input(InputEvent::CursorMoved { position, .. }) => {
                 self.cursor = position.as_vec2();
                 if let Some(session) = &mut self.session {
-                    let _ = session.text.handle_event(context, event);
+                    let _ = session.text.handle_event(
+                        &mut ViewContext { app: context, rect: layout.text, parent: () },
+                        event,
+                    );
                 }
                 let delete_hovered = layout
                     .delete
@@ -369,9 +372,6 @@ impl Widget<AppContext<'_>, AppEvent> for EditorWidget {
                 if let Some(point) = context.input.pointer() {
                     self.cursor = point;
                 }
-                let Some(layout) = self.layout else {
-                    return EventFlow::Consumed;
-                };
                 if !layout.panel.contains(self.cursor) {
                     self.close(context);
                     return EventFlow::Consumed;
@@ -379,7 +379,10 @@ impl Widget<AppContext<'_>, AppEvent> for EditorWidget {
                 if !buttons_consumed
                     && let Some(session) = &mut self.session
                 {
-                    let _ = session.text.handle_event(context, event);
+                    let _ = session.text.handle_event(
+                        &mut ViewContext { app: context, rect: layout.text, parent: () },
+                        event,
+                    );
                 }
             }
             Event::Input(InputEvent::MouseButton {
@@ -393,13 +396,19 @@ impl Widget<AppContext<'_>, AppEvent> for EditorWidget {
                 if !buttons_consumed
                     && let Some(session) = &mut self.session
                 {
-                    let _ = session.text.handle_event(context, event);
+                    let _ = session.text.handle_event(
+                        &mut ViewContext { app: context, rect: layout.text, parent: () },
+                        event,
+                    );
                 }
             }
             _ if buttons_consumed => {}
             _ => {
                 if let Some(session) = &mut self.session {
-                    let _ = session.text.handle_event(context, event);
+                    let _ = session.text.handle_event(
+                        &mut ViewContext { app: context, rect: layout.text, parent: () },
+                        event,
+                    );
                 }
             }
         }

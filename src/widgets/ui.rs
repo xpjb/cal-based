@@ -1,5 +1,5 @@
 use crate::*;
-use based::glam::Vec4;
+use based::glam::{Vec2, Vec4};
 
 pub const BACKGROUND: Vec4 = Vec4::new(0.035, 0.043, 0.055, 1.0);
 pub const GRID: Vec4 = Vec4::new(0.15, 0.175, 0.21, 1.0);
@@ -20,6 +20,12 @@ pub struct ViewContext<'a, 'b, ParentContext> {
     pub app: &'a mut AppContext<'b>,
     pub rect: Rect,
     pub parent: ParentContext,
+}
+
+impl<ParentContext> ViewContext<'_, '_, ParentContext> {
+    pub fn hit_test(&self, point: Vec2) -> bool {
+        self.app.hit_test(self.rect, point)
+    }
 }
 
 #[derive(Clone, Copy)]

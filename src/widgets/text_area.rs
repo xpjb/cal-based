@@ -32,6 +32,8 @@ const INPUT_SURFACE: SurfaceStyle = SurfaceStyle {
 
 #[derive(Clone, Copy)]
 struct TextAreaLayout {
+    viewport: Rect,
+    content: Rect,
     scale: f32,
     font_size: f32,
 }
@@ -47,9 +49,6 @@ impl TextContent {
     pub fn new(content: &str, now: Instant) -> Self {
         Self {
             edit: TextEdit::new(content),
-            layout: None,
-            scroll: ScrollState::default(),
-            origin: Vec2::ZERO,
             cursor: Vec2::ZERO,
             selecting: false,
             modifiers: ModifiersState::empty(),
@@ -67,20 +66,12 @@ impl Scroll<TextContent> {
         self.child.edit.content()
     }
 
-    pub fn set_rect(&mut self, rect: Rect, scale: f32) {
-        self.child.layout = Some(TextAreaLayout {
-            scale,
-            font_size: BASE_FONT_SIZE * scale,
-        });
-        self.set_bounds(rect, 48.0 * scale);
-    }
-
     pub fn control_key(&self) -> bool {
         self.child.modifiers.ctrl()
     }
 
     pub fn cursor_icon(&self) -> CursorIcon {
-        if self.child.scroll.viewport.client.contains(self.child.cursor) {
+        if self.child.hovered {
             CursorIcon::Text
         } else {
             CursorIcon::Default
@@ -90,9 +81,6 @@ impl Scroll<TextContent> {
 
 pub struct TextContent {
     edit: TextEdit,
-    layout: Option<TextAreaLayout>,
-    scroll: ScrollState,
-    origin: Vec2,
     cursor: Vec2,
     selecting: bool,
     modifiers: ModifiersState,
@@ -104,52 +92,49 @@ pub struct TextContent {
 }
 
 impl TextContent {
-    fn shape(&mut self, context: &mut AppContext<'_>) -> Option<text::ShapedHandle> {
-        let layout = self.layout?;
-        let text_origin = Vec2::new(12.0, 11.0) * layout.scale;
+    fn shape<ParentContext>(
+        &self,
+        context: &mut AppContext<'_>,
+        layout: TextAreaLayout,
+        scroll: &mut ScrollContext<ParentContext>,
+    ) -> Option<text::ShapedHandle> {
         if self.edit.is_empty() {
-            self.scroll.content_height = 0.0;
-            self.origin = self.scroll.viewport.to_screen(text_origin);
+            scroll.content_height = 0.0;
             return None;
         }
-        let viewport = self.scroll.viewport;
         let content = self.edit.content();
         let mut style = context.text.style;
         style.wrap_em = Some(
-            ((viewport.client.size.x - 24.0 * layout.scale) / layout.font_size).max(2.0),
+            ((layout.viewport.size.x - 24.0 * layout.scale) / layout.font_size).max(2.0),
         );
         style.align = text::Align::Left;
         style.line_spacing = 1.18;
         let handle = context.text.raw.shape_transient(&content, &style)?;
         let height = context.text.raw.measure(handle).height_em() * layout.font_size;
-        self.scroll.content_height = height + 22.0 * layout.scale;
-        self.origin = self.scroll.viewport.to_screen(text_origin);
+        scroll.content_height = height + 22.0 * layout.scale;
         Some(handle)
     }
 
-    fn place_at_cursor(
+    fn place_at_cursor<ParentContext>(
         &mut self,
         context: &mut AppContext<'_>,
+        layout: TextAreaLayout,
+        scroll: &mut ScrollContext<ParentContext>,
         select: bool,
         click_count: u8,
     ) {
-        let Some(layout) = self.layout else {
-            return;
-        };
-        let handle = self.shape(context);
+        let handle = self.shape(context, layout, scroll);
         if let Some(handle) = handle {
-            let viewport = self.scroll.viewport;
+            let client = context.clip;
+            if client.size.x <= 0.0 || client.size.y <= 0.0 {
+                return;
+            }
             let pointer = self.cursor;
             let point = Vec2::new(
-                pointer
-                    .x
-                    .clamp(viewport.client.position.x, viewport.client.right()),
-                pointer
-                    .y
-                    .clamp(viewport.client.position.y, viewport.client.bottom()),
+                pointer.x.clamp(client.position.x, client.right()),
+                pointer.y.clamp(client.position.y, client.bottom()),
             );
-            let point = viewport.to_content(point);
-            let text_origin = Vec2::new(12.0, 11.0) * layout.scale;
+            let text_origin = layout.content.position + Vec2::new(12.0, 11.0) * layout.scale;
             let em = text::Vec2::new(
                 (point.x - text_origin.x) / layout.font_size,
                 (point.y - text_origin.y) / layout.font_size,
@@ -176,11 +161,14 @@ impl TextContent {
         context.window.request_redraw();
     }
 
-    fn keep_caret_visible(&mut self, context: &mut AppContext<'_>, edited: bool) {
-        let Some(layout) = self.layout else {
-            return;
-        };
-        let Some(handle) = self.shape(context) else {
+    fn keep_caret_visible<ParentContext>(
+        &mut self,
+        context: &mut AppContext<'_>,
+        layout: TextAreaLayout,
+        scroll: &mut ScrollContext<ParentContext>,
+        edited: bool,
+    ) {
+        let Some(handle) = self.shape(context, layout, scroll) else {
             return;
         };
         let text_layout = context.text.raw.measure(handle);
@@ -193,45 +181,52 @@ impl TextContent {
         let top = 11.0 * layout.scale + caret.y_em * layout.font_size;
         let bottom = top + caret.height_em.max(1.0) * layout.font_size;
         let padding = 8.0 * layout.scale;
-        self.scroll.reveal = Some(top - padding..bottom + padding);
-        self.origin = self
-            .scroll.viewport
-            .to_screen(Vec2::new(12.0, 11.0) * layout.scale);
+        scroll.reveal = Some(top - padding..bottom + padding);
     }
 }
 
-impl ScrollContent for TextContent {
-    fn scroll_state(&mut self) -> (&mut ScrollState, Option<f32>) {
-        let drag_y = self.selecting.then_some(self.cursor.y);
-        (&mut self.scroll, drag_y)
-    }
-}
-
-impl Widget<AppContext<'_>, AppEvent> for TextContent {
-    fn handle_event(&mut self, context: &mut AppContext<'_>, event: &AppEvent) -> EventFlow {
+impl<ParentContext>
+    Widget<ViewContext<'_, '_, ScrollContext<&mut ParentContext>>, AppEvent> for TextContent
+{
+    fn handle_event(
+        &mut self,
+        context: &mut ViewContext<'_, '_, ScrollContext<&mut ParentContext>>,
+        event: &AppEvent,
+    ) -> EventFlow {
         if let Event::Input(InputEvent::CursorMoved { position, .. }) = event {
             self.cursor = position.as_vec2();
-        } else if let Some(pointer) = context.input.pointer() {
+        } else if let Some(pointer) = context.app.input.pointer() {
             self.cursor = pointer;
         }
+        let scale = context.app.scale;
+        let layout = TextAreaLayout {
+            viewport: context.parent.viewport,
+            content: context.rect,
+            scale,
+            font_size: BASE_FONT_SIZE * scale,
+        };
+        context.parent.drag_y = self.selecting.then_some(self.cursor.y);
         if let Event::Input(InputEvent::ModifiersChanged { modifiers }) = event {
             self.modifiers = *modifiers;
             return EventFlow::NotConsumed;
         }
-        let Some(layout) = self.layout else {
-            return EventFlow::NotConsumed;
-        };
-        if matches!(event, Event::Host(HostEvent::AboutToWait)) {
-            if self.selecting && self.scroll.viewport_changed {
-                self.place_at_cursor(context, true, 1);
-            }
-            self.scroll.viewport_changed = false;
+        if matches!(event, Event::Host(HostEvent::AboutToWait))
+            && self.selecting
+            && context.parent.scrolled
+        {
+            self.place_at_cursor(
+                context.app,
+                layout,
+                &mut context.parent,
+                true,
+                1,
+            );
         }
-        let client = self.scroll.viewport.client;
+        let client = layout.viewport;
         let pointer = self.cursor;
 
         if matches!(event, Event::Host(HostEvent::RedrawRequested)) {
-            self.hovered = client.contains(pointer);
+            self.hovered = context.app.hit_test(client, pointer);
             let state = if self.selecting {
                 SurfaceState::Pressed
             } else if self.hovered {
@@ -240,7 +235,7 @@ impl Widget<AppContext<'_>, AppEvent> for TextContent {
                 SurfaceState::Idle
             };
             paint_surface(
-                context,
+                context.app,
                 client,
                 8.0 * layout.scale,
                 layout.scale,
@@ -248,18 +243,23 @@ impl Widget<AppContext<'_>, AppEvent> for TextContent {
                 INPUT_SURFACE,
             );
 
-            let handle = self.shape(context);
+            let origin = layout.content.position + Vec2::new(12.0, 11.0) * layout.scale;
+            let handle = self.shape(
+                context.app,
+                layout,
+                &mut context.parent,
+            );
             if let Some(handle) = handle {
                 let (selection_rects, caret_rect) = {
-                    let text_layout = context.text.raw.measure(handle);
+                    let text_layout = context.app.text.raw.measure(handle);
                     let selection_rects = self.edit.selection().map_or_else(Vec::new, |selection| {
                         text_layout
                             .selection(selection)
                             .into_iter()
                             .filter_map(|span| {
                                 Rect::new(
-                                    self.origin.x + span.x_em * layout.font_size,
-                                    self.origin.y + span.y_em * layout.font_size,
+                                    origin.x + span.x_em * layout.font_size,
+                                    origin.y + span.y_em * layout.font_size,
                                     (span.width_em * layout.font_size).max(2.0 * layout.scale),
                                     span.height_em * layout.font_size,
                                 )
@@ -269,30 +269,30 @@ impl Widget<AppContext<'_>, AppEvent> for TextContent {
                     });
                     let caret = text_layout.caret_rect(text_layout.clamp_caret(self.edit.caret()));
                     let caret_rect = Rect::new(
-                        self.origin.x + caret.x_em * layout.font_size,
-                        self.origin.y + caret.y_em * layout.font_size,
+                        origin.x + caret.x_em * layout.font_size,
+                        origin.y + caret.y_em * layout.font_size,
                         1.5 * layout.scale,
                         caret.height_em.max(1.0) * layout.font_size,
                     );
                     (selection_rects, caret_rect)
                 };
                 for rect in selection_rects {
-                    context.quad(rect, SELECTION);
+                    context.app.quad(rect, SELECTION);
                 }
-                context.draw_text(
+                context.app.draw_text(
                     handle,
-                    self.origin,
+                    origin,
                     layout.font_size,
                     Vec4::new(0.86, 0.88, 0.91, 1.0),
                     client.inset(2.0 * layout.scale),
                 );
-                let phase = context.now.duration_since(self.last_input).as_millis() as u64
+                let phase = context.app.now.duration_since(self.last_input).as_millis() as u64
                     / CARET_PERIOD.as_millis() as u64;
                 if phase.is_multiple_of(2)
                     && let Some(caret_rect) = caret_rect
                         .intersection(client.inset(2.0 * layout.scale))
                 {
-                    context.quad(caret_rect, Vec4::new(0.95, 0.97, 1.0, 1.0));
+                    context.app.quad(caret_rect, Vec4::new(0.95, 0.97, 1.0, 1.0));
                 }
             } else {
                 Label::new(
@@ -301,11 +301,11 @@ impl Widget<AppContext<'_>, AppEvent> for TextContent {
                     Vec4::new(0.34, 0.38, 0.44, 1.0),
                 )
                 .top(false)
-                .paint(context, client.inset(12.0 * layout.scale));
-                let phase = context.now.duration_since(self.last_input).as_millis() as u64
+                .paint(context.app, client.inset(12.0 * layout.scale));
+                let phase = context.app.now.duration_since(self.last_input).as_millis() as u64
                     / CARET_PERIOD.as_millis() as u64;
                 if phase.is_multiple_of(2) {
-                    context.quad(
+                    context.app.quad(
                         Rect::new(
                             client.position.x + 12.0 * layout.scale,
                             client.position.y + 11.0 * layout.scale,
@@ -321,15 +321,15 @@ impl Widget<AppContext<'_>, AppEvent> for TextContent {
 
         match event {
             Event::Host(HostEvent::AboutToWait) => {
-                let elapsed = context.now.duration_since(self.last_input);
+                let elapsed = context.app.now.duration_since(self.last_input);
                 let phase = (elapsed.as_millis() / CARET_PERIOD.as_millis()) as u64;
                 if phase != self.blink_phase {
                     self.blink_phase = phase;
-                    context.window.request_redraw();
+                    context.app.window.request_redraw();
                 }
                 let next = self.last_input
                     + CARET_PERIOD * u32::try_from(phase + 1).unwrap_or(u32::MAX);
-                context.wake_at(next);
+                context.app.wake_at(next);
             }
             Event::Host(HostEvent::Focused { focused: false }) => {
                 self.modifiers = ModifiersState::empty();
@@ -337,11 +337,12 @@ impl Widget<AppContext<'_>, AppEvent> for TextContent {
                 self.drag_started = false;
                 if self.selecting {
                     self.selecting = false;
-                    context.window.request_redraw();
+                    context.parent.drag_y = None;
+                    context.app.window.request_redraw();
                 }
             }
             Event::Input(InputEvent::CursorMoved { .. }) => {
-                let hovered = client.contains(pointer);
+                let hovered = context.app.hit_test(client, pointer);
                 if self.selecting {
                     if !self.drag_started {
                         let distance = MULTI_CLICK_DISTANCE * layout.scale;
@@ -352,12 +353,18 @@ impl Widget<AppContext<'_>, AppEvent> for TextContent {
                         }
                         self.drag_started = true;
                     }
-                    self.place_at_cursor(context, true, 1);
+                    self.place_at_cursor(
+                        context.app,
+                        layout,
+                        &mut context.parent,
+                        true,
+                        1,
+                    );
                     return EventFlow::Consumed;
                 }
                 if hovered != self.hovered {
                     self.hovered = hovered;
-                    context.window.request_redraw();
+                    context.app.window.request_redraw();
                 }
                 if hovered {
                     return EventFlow::Consumed;
@@ -368,10 +375,10 @@ impl Widget<AppContext<'_>, AppEvent> for TextContent {
                 state: ElementState::Pressed,
                 ..
             }) => {
-                if client.contains(pointer) {
+                if context.app.hit_test(client, pointer) {
                     let distance = MULTI_CLICK_DISTANCE * layout.scale;
                     let count = self.last_click.map_or(1, |last| {
-                        if context.now.duration_since(last.time) <= MULTI_CLICK_DELAY
+                        if context.app.now.duration_since(last.time) <= MULTI_CLICK_DELAY
                             && pointer.distance_squared(last.position) <= distance * distance
                         {
                             if last.count >= 3 {
@@ -384,13 +391,20 @@ impl Widget<AppContext<'_>, AppEvent> for TextContent {
                         }
                     });
                     self.last_click = Some(LastClick {
-                        time: context.now,
+                        time: context.app.now,
                         position: pointer,
                         count,
                     });
                     self.selecting = true;
                     self.drag_started = false;
-                    self.place_at_cursor(context, self.modifiers.shift(), count);
+                    context.parent.drag_y = Some(pointer.y);
+                    self.place_at_cursor(
+                        context.app,
+                        layout,
+                        &mut context.parent,
+                        self.modifiers.shift(),
+                        count,
+                    );
                     return EventFlow::Consumed;
                 }
                 self.last_click = None;
@@ -403,7 +417,8 @@ impl Widget<AppContext<'_>, AppEvent> for TextContent {
                 if self.selecting {
                     self.selecting = false;
                     self.drag_started = false;
-                    context.window.request_redraw();
+                    context.parent.drag_y = None;
+                    context.app.window.request_redraw();
                     return EventFlow::Consumed;
                 }
             }
@@ -413,17 +428,26 @@ impl Widget<AppContext<'_>, AppEvent> for TextContent {
             Event::Input(InputEvent::InputMethod(based::InputMethodEvent::Commit { text })) => {
                 self.edit.insert_normalized(text);
                 self.last_click = None;
-                self.last_input = context.now;
+                self.last_input = context.app.now;
                 self.blink_phase = 0;
-                self.keep_caret_visible(context, true);
-                context.window.request_redraw();
+                self.keep_caret_visible(
+                    context.app,
+                    layout,
+                    &mut context.parent,
+                    true,
+                );
+                context.app.window.request_redraw();
                 return EventFlow::Consumed;
             }
             Event::Input(InputEvent::Keyboard(key)) if key.state == ElementState::Pressed => {
                 let ctrl = self.modifiers.ctrl();
                 let shift = self.modifiers.shift();
-                let handle = self.shape(context);
-                let text_layout = handle.map(|handle| context.text.raw.measure(handle));
+                let handle = self.shape(
+                    context.app,
+                    layout,
+                    &mut context.parent,
+                );
+                let text_layout = handle.map(|handle| context.app.text.raw.measure(handle));
                 let motion = match &key.logical_key {
                     Key::Named(NamedKey::ArrowLeft) if ctrl => Some(Motion::WordLeft),
                     Key::Named(NamedKey::ArrowRight) if ctrl => Some(Motion::WordRight),
@@ -522,10 +546,15 @@ impl Widget<AppContext<'_>, AppEvent> for TextContent {
                 }
                 if edited || moved {
                     self.last_click = None;
-                    self.last_input = context.now;
+                    self.last_input = context.app.now;
                     self.blink_phase = 0;
-                    self.keep_caret_visible(context, edited);
-                    context.window.request_redraw();
+                    self.keep_caret_visible(
+                        context.app,
+                        layout,
+                        &mut context.parent,
+                        edited,
+                    );
+                    context.app.window.request_redraw();
                 }
                 if handled {
                     self.last_click = None;
