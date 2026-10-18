@@ -20,15 +20,35 @@ pub enum SurfaceState {
     Dragging,
 }
 
-pub trait AppInput {
+pub trait AppContext {
     fn pointer(&self) -> Option<Vec2>;
     fn pointer_event(
         &self,
         event: &AppEvent,
     ) -> Option<(u64, Option<Vec2>, TouchPhase, bool)>;
+    fn request_redraw(&self);
+    fn scale(&self) -> f32;
+    fn surface(
+        &mut self,
+        rect: Rect,
+        radius: f32,
+        border_width: f32,
+        fill: Vec4,
+        border: Vec4,
+    );
+    fn text(
+        &mut self,
+        content: &str,
+        rect: Rect,
+        size: f32,
+        color: Vec4,
+        horizontal: HorizontalAlign,
+        vertical: VerticalAlign,
+        wrap: bool,
+    );
 }
 
-impl AppInput for AppServices<'_> {
+impl AppContext for AppServices<'_> {
     fn pointer(&self) -> Option<Vec2> {
         self.input.pointer()
     }
@@ -39,12 +59,55 @@ impl AppInput for AppServices<'_> {
     ) -> Option<(u64, Option<Vec2>, TouchPhase, bool)> {
         AppServices::pointer_event(self, event)
     }
+
+    fn request_redraw(&self) {
+        self.window.request_redraw();
+    }
+
+    fn scale(&self) -> f32 {
+        self.scale
+    }
+
+    fn surface(
+        &mut self,
+        rect: Rect,
+        radius: f32,
+        border_width: f32,
+        fill: Vec4,
+        border: Vec4,
+    ) {
+        AppServices::surface(self, rect, radius, border_width, fill, border);
+    }
+
+    fn text(
+        &mut self,
+        content: &str,
+        rect: Rect,
+        size: f32,
+        color: Vec4,
+        horizontal: HorizontalAlign,
+        vertical: VerticalAlign,
+        wrap: bool,
+    ) {
+        if let Some(frame) = self.frame.as_deref_mut() {
+            frame.text(
+                self.text,
+                content,
+                rect,
+                size,
+                color,
+                horizontal,
+                vertical,
+                wrap,
+            );
+        }
+    }
 }
 
-impl<Context> AppInput for Context
+impl<Context> AppContext for Context
 where
-    Context: Deref,
-    Context::Target: AppInput,
+    Context: DerefMut,
+    Context::Target: AppContext,
 {
     fn pointer(&self) -> Option<Vec2> {
         self.deref().pointer()
@@ -56,38 +119,71 @@ where
     ) -> Option<(u64, Option<Vec2>, TouchPhase, bool)> {
         self.deref().pointer_event(event)
     }
-}
 
-pub trait AppWindow {
-    fn request_redraw(&self);
-}
-
-impl AppWindow for AppServices<'_> {
-    fn request_redraw(&self) {
-        self.window.request_redraw();
-    }
-}
-
-impl<Context> AppWindow for Context
-where
-    Context: Deref,
-    Context::Target: AppWindow,
-{
     fn request_redraw(&self) {
         self.deref().request_redraw();
     }
+
+    fn scale(&self) -> f32 {
+        self.deref().scale()
+    }
+
+    fn surface(
+        &mut self,
+        rect: Rect,
+        radius: f32,
+        border_width: f32,
+        fill: Vec4,
+        border: Vec4,
+    ) {
+        self.deref_mut()
+            .surface(rect, radius, border_width, fill, border);
+    }
+
+    fn text(
+        &mut self,
+        content: &str,
+        rect: Rect,
+        size: f32,
+        color: Vec4,
+        horizontal: HorizontalAlign,
+        vertical: VerticalAlign,
+        wrap: bool,
+    ) {
+        self.deref_mut().text(
+            content,
+            rect,
+            size,
+            color,
+            horizontal,
+            vertical,
+            wrap,
+        );
+    }
 }
 
-pub trait AppContext: AppInput + AppWindow {}
+pub trait ViewContext {
+    fn rect(&self) -> Rect;
+}
 
-impl<Context> AppContext for Context where Context: AppInput + AppWindow {}
+impl<Context: ViewContext + ?Sized> ViewContext for &mut Context {
+    fn rect(&self) -> Rect {
+        (**self).rect()
+    }
+}
 
-pub struct ViewContext<ParentContext> {
+pub struct ViewBinding<ParentContext> {
     pub parent: ParentContext,
     pub rect: Rect,
 }
 
-impl<ParentContext> Deref for ViewContext<ParentContext> {
+impl<ParentContext> ViewContext for ViewBinding<ParentContext> {
+    fn rect(&self) -> Rect {
+        self.rect
+    }
+}
+
+impl<ParentContext> Deref for ViewBinding<ParentContext> {
     type Target = ParentContext;
 
     fn deref(&self) -> &Self::Target {
@@ -95,7 +191,7 @@ impl<ParentContext> Deref for ViewContext<ParentContext> {
     }
 }
 
-impl<ParentContext> DerefMut for ViewContext<ParentContext> {
+impl<ParentContext> DerefMut for ViewBinding<ParentContext> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.parent
     }
@@ -135,8 +231,8 @@ pub struct SurfaceStyle {
     pub border: StateColors,
 }
 
-pub fn paint_surface(
-    context: &mut AppServices<'_>,
+pub fn paint_surface<Context: AppContext>(
+    context: &mut Context,
     rect: Rect,
     radius: f32,
     border_width: f32,

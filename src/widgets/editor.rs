@@ -254,17 +254,17 @@ impl Widget<AppServices<'_>, AppEvent> for EditorWidget {
             }
 
             {
-                let mut button_context = ViewContext { parent: &mut *context, rect: cancel };
+                let mut button_context = ViewBinding { parent: &mut *context, rect: cancel };
                 let _ = self.cancel_button.handle_event(&mut button_context, event);
             }
             let _ = std::mem::take(&mut self.cancel_button.activated);
             {
-                let mut button_context = ViewContext { parent: &mut *context, rect: save };
+                let mut button_context = ViewBinding { parent: &mut *context, rect: save };
                 let _ = self.save_button.handle_event(&mut button_context, event);
             }
             let _ = std::mem::take(&mut self.save_button.activated);
             if let Some(delete) = delete {
-                let mut button_context = ViewContext { parent: &mut *context, rect: delete };
+                let mut button_context = ViewBinding { parent: &mut *context, rect: delete };
                 let _ = self.delete_button.handle_event(&mut button_context, event);
             }
             let _ = std::mem::take(&mut self.delete_button.activated);
@@ -273,17 +273,17 @@ impl Widget<AppServices<'_>, AppEvent> for EditorWidget {
 
         let layout = self.layout.unwrap_or_default();
         let save_flow = {
-            let mut button_context = ViewContext { parent: &mut *context, rect: layout.save };
+            let mut button_context = ViewBinding { parent: &mut *context, rect: layout.save };
             self.save_button.handle_event(&mut button_context, event)
         };
         let save = std::mem::take(&mut self.save_button.activated);
         let cancel_flow = {
-            let mut button_context = ViewContext { parent: &mut *context, rect: layout.cancel };
+            let mut button_context = ViewBinding { parent: &mut *context, rect: layout.cancel };
             self.cancel_button.handle_event(&mut button_context, event)
         };
         let cancel = std::mem::take(&mut self.cancel_button.activated);
         let delete_flow = if let Some(rect) = layout.delete {
-            let mut button_context = ViewContext { parent: &mut *context, rect };
+            let mut button_context = ViewBinding { parent: &mut *context, rect };
             self.delete_button.handle_event(&mut button_context, event)
         } else {
             EventFlow::NotConsumed

@@ -30,22 +30,25 @@ impl<T> Label<T> {
 }
 
 impl<T: AsRef<str>> Label<T> {
-    pub fn paint(&self, context: &mut AppServices<'_>, rect: Rect) {
-        let size = self.size * context.scale;
-        if let Some(frame) = context.frame.as_deref_mut() {
-            frame.text(context.text, self.text.as_ref(), rect, size, self.color,
-                self.horizontal, self.vertical, self.wrap);
-        }
+    pub fn paint<Context: AppContext>(&self, context: &mut Context, rect: Rect) {
+        context.text(
+            self.text.as_ref(),
+            rect,
+            self.size * context.scale(),
+            self.color,
+            self.horizontal,
+            self.vertical,
+            self.wrap,
+        );
     }
 }
 
-impl<T: AsRef<str>> Widget<ViewContext<&mut AppServices<'_>>, AppEvent> for Label<T> {
-    fn handle_event(
-        &mut self,
-        context: &mut ViewContext<&mut AppServices<'_>>,
-        _event: &AppEvent,
-    ) -> EventFlow {
-        let rect = context.rect;
+impl<T: AsRef<str>, Context> Widget<Context, AppEvent> for Label<T>
+where
+    Context: AppContext + ViewContext,
+{
+    fn handle_event(&mut self, context: &mut Context, _event: &AppEvent) -> EventFlow {
+        let rect = context.rect();
         self.paint(context, rect);
         EventFlow::NotConsumed
     }

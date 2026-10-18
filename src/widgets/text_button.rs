@@ -81,24 +81,23 @@ impl TextButton {
     }
 }
 
-impl Widget<ButtonContext<&mut ViewContext<&mut AppServices<'_>>>, AppEvent> for TextButton {
-    fn handle_event(
-        &mut self,
-        context: &mut ButtonContext<&mut ViewContext<&mut AppServices<'_>>>,
-        event: &AppEvent,
-    ) -> EventFlow {
+impl<Context> Widget<Context, AppEvent> for TextButton
+where
+    Context: AppContext + ViewContext + ButtonContext,
+{
+    fn handle_event(&mut self, context: &mut Context, event: &AppEvent) -> EventFlow {
         if !matches!(event, Event::Host(HostEvent::RedrawRequested)) {
             return EventFlow::NotConsumed;
         }
-        let state = if context.pressed {
+        let state = if context.button_pressed() {
             SurfaceState::Pressed
-        } else if context.hovered {
+        } else if context.button_hovered() {
             SurfaceState::Hovered
         } else {
             SurfaceState::Idle
         };
-        let rect = context.rect;
-        let scale = context.scale;
+        let rect = context.rect();
+        let scale = context.scale();
         paint_surface(
             context,
             rect,

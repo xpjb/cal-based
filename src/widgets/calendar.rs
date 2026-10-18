@@ -828,7 +828,7 @@ impl Widget<AppServices<'_>, AppEvent> for CalendarWidget {
                 );
             }
             {
-                let mut button_context = ViewContext {
+                let mut button_context = ViewBinding {
                     parent: &mut *context,
                     rect: settings_button,
                 };
@@ -836,7 +836,7 @@ impl Widget<AppServices<'_>, AppEvent> for CalendarWidget {
             }
             let _ = std::mem::take(&mut self.settings_button.activated);
             {
-                let mut button_context = ViewContext {
+                let mut button_context = ViewBinding {
                     parent: &mut *context,
                     rect: today_button,
                 };
@@ -858,7 +858,7 @@ impl Widget<AppServices<'_>, AppEvent> for CalendarWidget {
 
         let pointer_event = context.pointer_event(event);
         let settings_flow = {
-            let mut button_context = ViewContext {
+            let mut button_context = ViewBinding {
                 parent: &mut *context,
                 rect: settings_button,
             };
@@ -866,7 +866,7 @@ impl Widget<AppServices<'_>, AppEvent> for CalendarWidget {
         };
         let settings = std::mem::take(&mut self.settings_button.activated);
         let today_flow = {
-            let mut button_context = ViewContext {
+            let mut button_context = ViewBinding {
                 parent: &mut *context,
                 rect: today_button,
             };

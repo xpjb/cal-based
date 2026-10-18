@@ -4,13 +4,54 @@ use based::{
 };
 use std::ops::{Deref, DerefMut};
 
-pub struct ButtonContext<ParentContext> {
-    pub parent: ParentContext,
-    pub hovered: bool,
-    pub pressed: bool,
+pub trait ButtonContext {
+    fn button_hovered(&self) -> bool;
+    fn button_pressed(&self) -> bool;
 }
 
-impl<ParentContext> Deref for ButtonContext<ParentContext> {
+impl<Context: ButtonContext + ?Sized> ButtonContext for &mut Context {
+    fn button_hovered(&self) -> bool {
+        (**self).button_hovered()
+    }
+
+    fn button_pressed(&self) -> bool {
+        (**self).button_pressed()
+    }
+}
+
+pub struct ButtonBinding<ParentContext> {
+    pub parent: ParentContext,
+    hovered: bool,
+    pressed: bool,
+}
+
+impl<ParentContext> ButtonContext for ButtonBinding<ParentContext> {
+    fn button_hovered(&self) -> bool {
+        self.hovered
+    }
+
+    fn button_pressed(&self) -> bool {
+        self.pressed
+    }
+}
+
+impl<ParentContext: ViewContext> ViewContext for ButtonBinding<ParentContext> {
+    fn rect(&self) -> Rect {
+        self.parent.rect()
+    }
+}
+
+impl<ParentContext: ButtonContext> ButtonContext for ViewBinding<ParentContext> {
+    fn button_hovered(&self) -> bool {
+        self.parent.button_hovered()
+    }
+
+    fn button_pressed(&self) -> bool {
+        self.parent.button_pressed()
+    }
+}
+
+impl<ParentContext> Deref for ButtonBinding<ParentContext> {
     type Target = ParentContext;
 
     fn deref(&self) -> &Self::Target {
@@ -18,7 +59,7 @@ impl<ParentContext> Deref for ButtonContext<ParentContext> {
     }
 }
 
-impl<ParentContext> DerefMut for ButtonContext<ParentContext> {
+impl<ParentContext> DerefMut for ButtonBinding<ParentContext> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.parent
     }
@@ -45,16 +86,12 @@ impl<W> Button<W> {
     }
 }
 
-impl<W, ParentContext> Widget<ViewContext<ParentContext>, AppEvent> for Button<W>
+impl<W, Context> Widget<Context, AppEvent> for Button<W>
 where
-    ParentContext: AppContext,
-    for<'a> W: Widget<ButtonContext<&'a mut ViewContext<ParentContext>>, AppEvent>,
+    Context: AppContext + ViewContext,
+    for<'a> W: Widget<ButtonBinding<&'a mut Context>, AppEvent>,
 {
-    fn handle_event(
-        &mut self,
-        context: &mut ViewContext<ParentContext>,
-        event: &AppEvent,
-    ) -> EventFlow {
+    fn handle_event(&mut self, context: &mut Context, event: &AppEvent) -> EventFlow {
         let before = (self.hovered, self.pressed());
         let redraw = matches!(event, Event::Host(HostEvent::RedrawRequested));
         let mut consumed = false;
@@ -63,7 +100,7 @@ where
             if self.active.is_none() {
                 self.hovered = context
                     .pointer()
-                    .is_some_and(|point| context.rect.contains(point));
+                    .is_some_and(|point| context.rect().contains(point));
             }
         } else {
             let cancelled = match event {
@@ -81,7 +118,7 @@ where
             } else if let Some((pointer, point, phase, hover)) =
                 context.pointer_event(event)
             {
-                let inside = point.is_some_and(|point| context.rect.contains(point));
+                let inside = point.is_some_and(|point| context.rect().contains(point));
                 if hover {
                     self.hovered = inside;
                 }
@@ -128,7 +165,7 @@ where
         if !redraw && before != (self.hovered, pressed) {
             context.request_redraw();
         }
-        let mut child_context = ButtonContext {
+        let mut child_context = ButtonBinding {
             parent: context,
             hovered: self.hovered,
             pressed,
@@ -139,5 +176,37 @@ where
         } else {
             EventFlow::NotConsumed
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nearest_button_and_view_bindings_win() {
+        let outer_rect = Rect::new(0.0, 0.0, 100.0, 100.0);
+        let inner_rect = Rect::new(10.0, 20.0, 30.0, 40.0);
+        let outer_view = ViewBinding { parent: (), rect: outer_rect };
+        let outer_button = ButtonBinding {
+            parent: outer_view,
+            hovered: true,
+            pressed: true,
+        };
+        let inner_view = ViewBinding { parent: outer_button, rect: inner_rect };
+
+        assert!(inner_view.button_hovered());
+        assert!(inner_view.button_pressed());
+        assert_eq!(inner_view.rect(), inner_rect);
+
+        let inner_button = ButtonBinding {
+            parent: inner_view,
+            hovered: false,
+            pressed: false,
+        };
+
+        assert!(!inner_button.button_hovered());
+        assert!(!inner_button.button_pressed());
+        assert_eq!(inner_button.rect(), inner_rect);
     }
 }

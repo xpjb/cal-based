@@ -81,13 +81,74 @@ impl DayColorSlot {
     }
 }
 
-struct DayColorContext<ParentContext> {
+trait DayColorContext {
+    fn day_colors(&self) -> DayColors;
+    fn selected_day_color(&self) -> DayColorSlot;
+}
+
+impl<Context: DayColorContext + ?Sized> DayColorContext for &mut Context {
+    fn day_colors(&self) -> DayColors {
+        (**self).day_colors()
+    }
+
+    fn selected_day_color(&self) -> DayColorSlot {
+        (**self).selected_day_color()
+    }
+}
+
+struct DayColorBinding<ParentContext> {
     parent: ParentContext,
     colors: DayColors,
     selected: DayColorSlot,
 }
 
-impl<ParentContext> Deref for DayColorContext<ParentContext> {
+impl<ParentContext> DayColorContext for DayColorBinding<ParentContext> {
+    fn day_colors(&self) -> DayColors {
+        self.colors
+    }
+
+    fn selected_day_color(&self) -> DayColorSlot {
+        self.selected
+    }
+}
+
+impl<ParentContext: ViewContext> ViewContext for DayColorBinding<ParentContext> {
+    fn rect(&self) -> Rect {
+        self.parent.rect()
+    }
+}
+
+impl<ParentContext: ButtonContext> ButtonContext for DayColorBinding<ParentContext> {
+    fn button_hovered(&self) -> bool {
+        self.parent.button_hovered()
+    }
+
+    fn button_pressed(&self) -> bool {
+        self.parent.button_pressed()
+    }
+}
+
+impl<ParentContext: DayColorContext> DayColorContext for ViewBinding<ParentContext> {
+    fn day_colors(&self) -> DayColors {
+        self.parent.day_colors()
+    }
+
+    fn selected_day_color(&self) -> DayColorSlot {
+        self.parent.selected_day_color()
+    }
+}
+
+impl<ParentContext: DayColorContext> DayColorContext for ButtonBinding<ParentContext> {
+    fn day_colors(&self) -> DayColors {
+        self.parent.day_colors()
+    }
+
+    fn selected_day_color(&self) -> DayColorSlot {
+        self.parent.selected_day_color()
+    }
+}
+
+impl<ParentContext> Deref for DayColorBinding<ParentContext> {
     type Target = ParentContext;
 
     fn deref(&self) -> &Self::Target {
@@ -95,7 +156,7 @@ impl<ParentContext> Deref for DayColorContext<ParentContext> {
     }
 }
 
-impl<ParentContext> DerefMut for DayColorContext<ParentContext> {
+impl<ParentContext> DerefMut for DayColorBinding<ParentContext> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.parent
     }
@@ -103,30 +164,23 @@ impl<ParentContext> DerefMut for DayColorContext<ParentContext> {
 
 struct DayColorRow(DayColorSlot);
 
-impl Widget<
-    ButtonContext<&mut ViewContext<DayColorContext<&mut AppServices<'_>>>>,
-    AppEvent,
-> for DayColorRow
+impl<Context> Widget<Context, AppEvent> for DayColorRow
+where
+    Context: AppContext + ViewContext + ButtonContext + DayColorContext,
 {
-    fn handle_event(
-        &mut self,
-        context: &mut ButtonContext<
-            &mut ViewContext<DayColorContext<&mut AppServices<'_>>>,
-        >,
-        event: &AppEvent,
-    ) -> EventFlow {
+    fn handle_event(&mut self, context: &mut Context, event: &AppEvent) -> EventFlow {
         if !matches!(event, Event::Host(HostEvent::RedrawRequested)) {
             return EventFlow::NotConsumed;
         }
-        let rect = context.rect;
-        let colors = context.colors;
-        let selected = context.selected;
-        let scale = context.scale;
+        let rect = context.rect();
+        let colors = context.day_colors();
+        let selected = context.selected_day_color();
+        let scale = context.scale();
         let state = if self.0 == selected {
             SurfaceState::Dragging
-        } else if context.pressed {
+        } else if context.button_pressed() {
             SurfaceState::Pressed
-        } else if context.hovered {
+        } else if context.button_hovered() {
             SurfaceState::Hovered
         } else {
             SurfaceState::Idle
@@ -419,8 +473,8 @@ impl Widget<AppServices<'_>, AppEvent> for SettingsWidget {
 
             for (button, rect) in self.rows.iter_mut().zip(rows) {
                 {
-                    let mut button_context = ViewContext {
-                        parent: DayColorContext {
+                    let mut button_context = ViewBinding {
+                        parent: DayColorBinding {
                             parent: &mut *context,
                             colors: row_data.0,
                             selected: row_data.1,
@@ -538,12 +592,12 @@ impl Widget<AppServices<'_>, AppEvent> for SettingsWidget {
                 );
             }
             {
-                let mut button_context = ViewContext { parent: &mut *context, rect: reset };
+                let mut button_context = ViewBinding { parent: &mut *context, rect: reset };
                 let _ = self.reset_button.handle_event(&mut button_context, event);
             }
             let _ = std::mem::take(&mut self.reset_button.activated);
             {
-                let mut button_context = ViewContext { parent: &mut *context, rect: done };
+                let mut button_context = ViewBinding { parent: &mut *context, rect: done };
                 let _ = self.done_button.handle_event(&mut button_context, event);
             }
             let _ = std::mem::take(&mut self.done_button.activated);
@@ -552,12 +606,12 @@ impl Widget<AppServices<'_>, AppEvent> for SettingsWidget {
 
         let layout = self.layout.unwrap_or_default();
         let done_flow = {
-            let mut button_context = ViewContext { parent: &mut *context, rect: layout.done };
+            let mut button_context = ViewBinding { parent: &mut *context, rect: layout.done };
             self.done_button.handle_event(&mut button_context, event)
         };
         let done = std::mem::take(&mut self.done_button.activated);
         let reset_flow = {
-            let mut button_context = ViewContext { parent: &mut *context, rect: layout.reset };
+            let mut button_context = ViewBinding { parent: &mut *context, rect: layout.reset };
             self.reset_button.handle_event(&mut button_context, event)
         };
         let reset = std::mem::take(&mut self.reset_button.activated);
@@ -566,8 +620,8 @@ impl Widget<AppServices<'_>, AppEvent> for SettingsWidget {
         let mut selected = None;
         for (index, (row, rect)) in self.rows.iter_mut().zip(layout.rows).enumerate() {
             let flow = {
-                let mut button_context = ViewContext {
-                    parent: DayColorContext {
+                let mut button_context = ViewBinding {
+                    parent: DayColorBinding {
                         parent: &mut *context,
                         colors: row_data.0,
                         selected: row_data.1,
